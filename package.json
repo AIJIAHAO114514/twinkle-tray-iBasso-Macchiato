@@ -155,7 +155,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "${productName} v${version}.${ext}",
+      "artifactName": "${productName} v${version} x iBasso Macchiato.${ext}",
       "icon": "src/assets/logo.ico",
       "legalTrademarks": "Xander Frangos"
     },
