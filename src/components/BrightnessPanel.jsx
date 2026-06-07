@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useMemo, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import Slider from "./Slider";
 import DDCCISliders from "./DDCCISliders"
 import HDRSliders from "./HDRSliders";
@@ -21,6 +21,11 @@ const BrightnessPanel = memo(function BrightnessPanel() {
   const [init, setInit] = useState(false)
   const [lastLevels, setLastLevels] = useState([])
   const [T] = useState(new TranslateReact({}, {}))
+  const [macchiatoVol, setMacchiatoVol] = useState(-1)
+  const [macchiatoMuted, setMacchiatoMuted] = useState(false)
+  const [macchiatoConnected, setMacchiatoConnected] = useState(false)
+  const macchiatoPending = useRef(-1)
+  const macchiatoChanged = useRef(false)
 
   const numMonitors = useMemo(() => {
     let localNumMonitors = 0
@@ -65,7 +70,33 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     window.pauseMonitorUpdates()
   }
 
-  // Update monitor info
+  // ── Macchiato: poll state + batch send volume (matches TT syncBrightness interval) ──
+  useEffect(() => {
+    const poll = setInterval(() => {
+      const s = window.ipc.sendSync('macchiato-get-volume');
+      if (s && s.connected) { setMacchiatoVol(s.volume); setMacchiatoMuted(s.muted); setMacchiatoConnected(true); }
+      else setMacchiatoConnected(false);
+    }, 500);
+    return () => clearInterval(poll);
+  }, []);
+
+  useEffect(() => {
+    const batch = setInterval(() => {
+      if (macchiatoChanged.current && macchiatoConnected) {
+        macchiatoChanged.current = false;
+        window.ipc.send('macchiato-set-volume', { level: macchiatoPending.current });
+      }
+    }, 100);
+    return () => clearInterval(batch);
+  }, [macchiatoConnected]);
+
+  const macchiatoChange = (v) => {
+    macchiatoPending.current = v;
+    macchiatoChanged.current = true;
+    setMacchiatoVol(v);
+    window.pauseMonitorUpdates();
+  };
+
   const recievedMonitors = (e) => {
     let newMonitors = { ...e.detail }
     setLastLevels([])
@@ -161,6 +192,11 @@ const BrightnessPanel = memo(function BrightnessPanel() {
 
   const handleIsRefreshingUpdate = (e) => setState(prev => ({ ...prev, isRefreshing: e.detail }))
   const handleUpdateProgress = (e) => setState(prev => ({ ...prev, updateProgress: e.detail.progress }))
+  const macchiatoStateHandler = (e) => {
+    setMacchiatoVol(e.detail.volume);
+    setMacchiatoMuted(e.detail.muted);
+    setMacchiatoConnected(e.detail.connected);
+  };
 
   useEffect(() => {
     resetBrightnessInterval()
@@ -177,6 +213,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     window.addEventListener("updateUpdated", (e) => recievedUpdate(e))
     window.addEventListener("sleepUpdated", (e) => recievedSleep(e))
     window.addEventListener("isRefreshing", (e) => handleIsRefreshingUpdate(e))
+    window.addEventListener("macchiatoStateChanged", macchiatoStateHandler)
 
     if (window.isAppX === false) {
       window.addEventListener("updateProgress", (e) => handleUpdateProgress(e))
@@ -196,6 +233,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
       window.removeEventListener("sleepUpdated")
       window.removeEventListener("isRefreshing")
       window.removeEventListener("updateProgress")
+      window.removeEventListener("macchiatoStateChanged", macchiatoStateHandler)
     }
   }, [])
 
@@ -380,6 +418,48 @@ const BrightnessPanel = memo(function BrightnessPanel() {
         </div>
       </div>
       {state.sleeping ? (<div></div>) : getMonitors()}
+      {macchiatoConnected && (
+        <div className="monitor-item" key="macchiato"
+          onWheel={(e) => {
+            e.preventDefault();
+            const cur = macchiatoMuted ? (macchiatoVol > 0 ? macchiatoVol : 10) : macchiatoVol;
+            const delta = Math.round(e.deltaY * -1 * 0.02 * (window.settings?.scrollAmount ?? 2));
+            const v = Math.max(0, Math.min(100, cur + delta));
+            macchiatoChange(v);
+            if (macchiatoMuted && v > 0) { setMacchiatoMuted(false); macchiatoChange(v); window.ipc.send('macchiato-toggle-mute'); }
+          }}
+        >
+          <div className="name-row">
+            <div className="icon" onClick={() => { setMacchiatoMuted(p => !p); window.ipc.send('macchiato-toggle-mute'); }} style={{ cursor: 'pointer' }}><span>&#xE767;</span></div>
+            <div className="title">iBasso Macchiato</div>
+          </div>
+          <div className="input--range">
+            <div className="rangeGroup">
+              <input type="range" min={0} max={100}
+                value={Math.max(0, macchiatoVol)}
+                className="range"
+                onChange={(e) => {
+                  const v = parseInt(e.target.value);
+                  macchiatoChange(v);
+                  if (macchiatoMuted && v > 0) { setMacchiatoMuted(false); macchiatoChange(v); window.ipc.send('macchiato-toggle-mute'); }
+                }}
+              />
+              <div className="progress" style={{ width: Math.max(0, macchiatoVol) + '%', background: macchiatoMuted ? '#ff8282' : undefined }}></div>
+            </div>
+            <input type="number" min={0} max={100}
+              value={Math.max(0, macchiatoVol)}
+              className="val"
+              onChange={(e) => {
+                const v = parseInt(e.target.value);
+                macchiatoChange(v);
+                if (macchiatoMuted && v > 0) { setMacchiatoMuted(false); macchiatoChange(v); window.ipc.send('macchiato-toggle-mute'); }
+              }}
+              onClick={() => { setMacchiatoMuted(p => !p); window.ipc.send('macchiato-toggle-mute'); }}
+              style={{ color: macchiatoMuted ? '#ff8282' : undefined, cursor: 'pointer' }}
+            />
+          </div>
+        </div>
+      )}
       {
         (state.update && state.update.show)
           ?

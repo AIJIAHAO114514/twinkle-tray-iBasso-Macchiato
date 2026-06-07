@@ -196,6 +196,10 @@ ipc.on("panelBlur", (e) => {
     setTimeout(() => global.gc(), 2000)
 })
 
+ipc.on('macchiato-state-changed', (e, state) => {
+    window.dispatchEvent(new CustomEvent('macchiatoStateChanged', { detail: state }))
+})
+
 ipc.on("panel-unsleep", () => {
     window.dispatchEvent(new CustomEvent('sleepUpdated', {
         detail: false

@@ -78,6 +78,7 @@ ActiveWindow.initialize()
 const reg = require('native-reg');
 const Color = require('color')
 const Translate = require('./Translate');
+const MacchiatoDevice = require('./MacchiatoDevice');
 const { EventEmitter } = require("events");
 
 const isReallyWin11 = (require("os").release()?.split(".")[2] * 1) >= 22000
@@ -434,6 +435,7 @@ let monitors = {}
 let mainWindow;
 let tray = null
 let lastTheme = false
+let macchiatoDevice = null
 
 const panelSize = {
   width: 356,
@@ -1343,13 +1345,8 @@ async function hotkeyOverlayShow() {
     const panelWidth = 216
     const primaryDisplay = screen.getPrimaryDisplay()
 
-    // Only add gap if the taskbar is actually hidden (not taking up space).
-    // This handles per-monitor auto-hide mods (e.g., Windhawk) where the global
-    // auto-hide registry setting doesn't reflect the actual state on each monitor.
-    const taskbarActuallyHidden = primaryDisplay.bounds.height === primaryDisplay.workArea.height
-
     let gap = 0
-    if(taskbarActuallyHidden && detectedTaskbarHide) {
+    if(detectedTaskbarHide) {
       gap = detectedTaskbarHeight
     }
     if (typeof settings.overrideTaskbarGap === "number") {
@@ -2854,13 +2851,6 @@ function repositionPanel() {
     sendToAllWindows('taskbar', taskbar)
 
     if (mainWindow && !isAnimatingPanel) {
-      // Check if taskbar is actually taking up space on the primary display.
-      // This handles per-monitor auto-hide mods (e.g., Windhawk) where the global
-      // auto-hide registry setting doesn't reflect the actual state on each monitor.
-      const taskbarActuallyHidden = (taskbar.position === "BOTTOM" || taskbar.position === "TOP")
-        ? primaryDisplay.bounds.height === primaryDisplay.workArea.height
-        : primaryDisplay.bounds.width === primaryDisplay.workArea.width
-
       if (taskbar.position == "LEFT") {
         mainWindow.setBounds({
           width: panelSize.width,
@@ -2875,8 +2865,8 @@ function repositionPanel() {
           x: primaryDisplay.bounds.x + primaryDisplay.workArea.width - panelSize.width,
           y: primaryDisplay.bounds.y + taskbar.gap
         })
-      } else if (taskbarActuallyHidden && taskbar.position == "BOTTOM") {
-        // Edge case for auto-hide taskbar (taskbar is truly hidden, not taking up space)
+      } else if (detectedTaskbarHide && taskbar.position == "BOTTOM") {
+        // Edge case for auto-hide taskbar
         mainWindow.setBounds({
           width: panelSize.width,
           height: panelSize.height,
@@ -3246,6 +3236,12 @@ app.on("ready", async () => {
   await getThemeRegistry()
   //readSettings()
   getLocalization()
+  macchiatoDevice = new MacchiatoDevice();
+  macchiatoDevice.on('volume-changed', () => setTrayPercent());
+  macchiatoDevice.on('connected', () => setTrayPercent());
+  macchiatoDevice.on('disconnected', () => setTrayPercent());
+  macchiatoDevice.findAndOpen();
+  macchiatoDevice.startDeviceWatcher();
   showIntro()
   createPanel(false, true)
 
@@ -3269,13 +3265,6 @@ app.on("ready", async () => {
       setTimeout(() => handleBackgroundUpdate(true), 3500)
     }
     restartBackgroundUpdate()
-  
-    // Set startup grace period to prevent delayed handlers from overwriting current brightness
-    isStartupGracePeriod = true
-    setTimeout(() => {
-      isStartupGracePeriod = false
-      console.log("Startup grace period ended")
-    }, 30000) // 30 seconds grace period
   
     setTimeout(addEventListeners, 5000)
   })
@@ -3313,9 +3302,10 @@ function createTray() {
 
   const { Tray } = require('electron')
   tray = new Tray(getTrayIconPath())
-  tray.setToolTip('Twinkle Tray' + (isDev ? " (Dev)" : ""))
+  tray.setToolTip(buildTooltipText())
   setTrayMenu()
   tray.on("click", async () => toggleTray(true))
+  tray.on("double-click", () => { if (macchiatoDevice && macchiatoDevice.connected) { macchiatoDevice.toggleMute(); if (mainWindow) mainWindow.webContents.send('macchiato-state-changed', { volume: macchiatoDevice.volume, muted: macchiatoDevice.muted, connected: true }); } });
 
   let lastMouseMove = Date.now()
   tray.on('mouse-move', async () => {
@@ -3421,21 +3411,34 @@ function getDebugTrayMenuItems() {
   }
 }
 
+function buildTooltipText() {
+  let text = 'Twinkle Tray' + (isDev ? " (Dev)" : "")
+  let averagePerc = 0
+  let i = 0
+  for (let key in monitors) {
+    if (monitors[key].type === "ddcci" || monitors[key].type === "wmi") {
+      i++
+      averagePerc += monitors[key].brightness
+    }
+  }
+  if (i > 0) {
+    averagePerc = Math.floor(averagePerc / i)
+    text += ' (' + averagePerc + '%)'
+  }
+  if (macchiatoDevice && macchiatoDevice.connected) {
+    if (macchiatoDevice.muted) {
+      text += '\niBasso Macchiato: Muted'
+    } else {
+      text += '\niBasso Macchiato: ' + macchiatoDevice.volume + '%'
+    }
+  }
+  return text
+}
+
 function setTrayPercent() {
   try {
     if (tray) {
-      let averagePerc = 0
-      let i = 0
-      for (let key in monitors) {
-        if (monitors[key].type === "ddcci" || monitors[key].type === "wmi") {
-          i++
-          averagePerc += monitors[key].brightness
-        }
-      }
-      if (i > 0) {
-        averagePerc = Math.floor(averagePerc / i)
-        tray.setToolTip('Twinkle Tray' + (isDev ? " (Dev)" : "") + ' (' + averagePerc + '%)')
-      }
+      tray.setToolTip(buildTooltipText())
     }
   } catch (e) {
     console.log(e)
@@ -3566,6 +3569,10 @@ function showIntro() {
   })
 
 }
+
+ipcMain.on('macchiato-set-volume', (e, d) => { if (macchiatoDevice && macchiatoDevice.connected) macchiatoDevice.setVolume(d.level); });
+ipcMain.on('macchiato-toggle-mute', (e) => { if (macchiatoDevice && macchiatoDevice.connected) { macchiatoDevice.toggleMute(); e.sender.send('macchiato-state-changed', { volume: macchiatoDevice.volume, muted: macchiatoDevice.muted, connected: true }); } });
+ipcMain.on('macchiato-get-volume', (e) => { e.returnValue = macchiatoDevice ? { volume: macchiatoDevice.volume, muted: macchiatoDevice.muted, connected: macchiatoDevice.connected } : { volume: -1, muted: false, connected: false }; });
 
 ipcMain.on('close-intro', (event, newSettings) => {
   if (introWindow) {
@@ -3933,7 +3940,6 @@ function handleAccentChange() {
 }
 
 let skipFirstMonChange = false
-let isStartupGracePeriod = false
 let handleChangeTimeout0
 let handleChangeTimeout1
 let handleChangeTimeout2
@@ -3960,15 +3966,7 @@ function handleMonitorChange(t, e, d) {
     // Reset all known displays
     await refreshMonitors(true)
 
-    // During startup grace period, use current monitor brightness instead of saved profile
-    // This prevents overwriting brightness that was manually set before shutdown
-    if (!settings.disableAutoApply) {
-      if (isStartupGracePeriod) {
-        setKnownBrightness(true); // useCurrentMonitors = true to preserve current brightness
-      } else {
-        setKnownBrightness();
-      }
-    }
+    if (!settings.disableAutoApply) setKnownBrightness();
     handleBackgroundUpdate(true) // Apply Time Of Day Adjustments
 
     // If displays not shown, refresh mainWindow
@@ -4036,15 +4034,7 @@ function handleMetricsChange(type) {
     // Do a quick check to ensure handles are all good
     await refreshMonitors(true)
 
-    // During startup grace period, use current monitor brightness instead of saved profile
-    // This prevents overwriting brightness that was manually set before shutdown
-    if (!settings.disableAutoApply && !hasRecentlyInteracted) {
-      if (isStartupGracePeriod) {
-        setKnownBrightness(true); // useCurrentMonitors = true to preserve current brightness
-      } else {
-        setKnownBrightness();
-      }
-    }
+    if (!settings.disableAutoApply && !hasRecentlyInteracted) setKnownBrightness();
     handleBackgroundUpdate(true) // Apply Time Of Day Adjustments
 
     handleChangeTimeout1 = false
