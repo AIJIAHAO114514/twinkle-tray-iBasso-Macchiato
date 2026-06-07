@@ -26,6 +26,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
   const [macchiatoConnected, setMacchiatoConnected] = useState(false)
   const macchiatoPending = useRef(-1)
   const macchiatoChanged = useRef(false)
+  const macchiatoCooldown = useRef(0)
 
   const numMonitors = useMemo(() => {
     let localNumMonitors = 0
@@ -73,6 +74,8 @@ const BrightnessPanel = memo(function BrightnessPanel() {
   // ── Macchiato: poll state + batch send volume (matches TT syncBrightness interval) ──
   useEffect(() => {
     const poll = setInterval(() => {
+      if (macchiatoChanged.current) return;
+      if (Date.now() < macchiatoCooldown.current) return;
       const s = window.ipc.sendSync('macchiato-get-volume');
       if (s && s.connected) { setMacchiatoVol(s.volume); setMacchiatoMuted(s.muted); setMacchiatoConnected(true); }
       else setMacchiatoConnected(false);
@@ -84,6 +87,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     const batch = setInterval(() => {
       if (macchiatoChanged.current && macchiatoConnected) {
         macchiatoChanged.current = false;
+        macchiatoCooldown.current = Date.now() + 300;
         window.ipc.send('macchiato-set-volume', { level: macchiatoPending.current });
       }
     }, 100);
@@ -156,11 +160,6 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     setDoBackgroundEvent(true)
   }
 
-  const recievedUpdate = (e) => {
-    const update = e.detail
-    setState(prev => ({ ...prev, update }))
-  }
-
   const recievedSleep = (e) => {
     setState(prev => ({ ...prev, sleeping: e.detail }))
   }
@@ -191,7 +190,6 @@ const BrightnessPanel = memo(function BrightnessPanel() {
   }
 
   const handleIsRefreshingUpdate = (e) => setState(prev => ({ ...prev, isRefreshing: e.detail }))
-  const handleUpdateProgress = (e) => setState(prev => ({ ...prev, updateProgress: e.detail.progress }))
   const macchiatoStateHandler = (e) => {
     setMacchiatoVol(e.detail.volume);
     setMacchiatoMuted(e.detail.muted);
@@ -210,14 +208,9 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     window.addEventListener("monitorsUpdated", (e) => recievedMonitors(e))
     window.addEventListener("settingsUpdated", (e) => recievedSettings(e))
     window.addEventListener("localizationUpdated", (e) => T.setLocalizationData(e.detail.desired, e.detail.default))
-    window.addEventListener("updateUpdated", (e) => recievedUpdate(e))
     window.addEventListener("sleepUpdated", (e) => recievedSleep(e))
     window.addEventListener("isRefreshing", (e) => handleIsRefreshingUpdate(e))
     window.addEventListener("macchiatoStateChanged", macchiatoStateHandler)
-
-    if (window.isAppX === false) {
-      window.addEventListener("updateProgress", (e) => handleUpdateProgress(e))
-    }
 
     // Update brightness every interval, if changed
     window.requestSettings()
@@ -229,10 +222,8 @@ const BrightnessPanel = memo(function BrightnessPanel() {
       window.removeEventListener("monitorsUpdated")
       window.removeEventListener("settingsUpdated")
       window.removeEventListener("localizationUpdated")
-      window.removeEventListener("updateUpdated")
       window.removeEventListener("sleepUpdated")
       window.removeEventListener("isRefreshing")
-      window.removeEventListener("updateProgress")
       window.removeEventListener("macchiatoStateChanged", macchiatoStateHandler)
     }
   }, [])
@@ -423,7 +414,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
           onWheel={(e) => {
             e.preventDefault();
             const cur = macchiatoMuted ? (macchiatoVol > 0 ? macchiatoVol : 10) : macchiatoVol;
-            const delta = Math.round(e.deltaY * -1 * 0.02 * (window.settings?.scrollAmount ?? 2));
+            const delta = e.deltaY > 0 ? -1 : 1;
             const v = Math.max(0, Math.min(100, cur + delta));
             macchiatoChange(v);
             if (macchiatoMuted && v > 0) { setMacchiatoMuted(false); macchiatoChange(v); window.ipc.send('macchiato-toggle-mute'); }
@@ -460,38 +451,6 @@ const BrightnessPanel = memo(function BrightnessPanel() {
           </div>
         </div>
       )}
-      {
-        (state.update && state.update.show)
-          ?
-          <div className="updateBar">
-            <div className="left">
-              {T.t("PANEL_UPDATE_AVAILABLE")}
-              ({state.update.version})
-            </div>
-            <div className="right">
-              <a onClick={window.installUpdate}>
-                {T.t("GENERIC_INSTALL")}
-              </a>
-              <a className="icon" title={T.t("GENERIC_DISMISS")} onClick={window.dismissUpdate}>
-                &#xEF2C;
-              </a>
-            </div>
-          </div>
-          :
-          (state.update && state.update.downloading)
-          &&
-          <div className="updateBar">
-            <div className="left progress">
-              <div className="progress-bar">
-                <div style={{ width: `${state.updateProgress}%` }}>
-                </div>
-              </div>
-            </div>
-            <div className="right">
-              {state.updateProgress}%
-            </div>
-          </div>
-      }
       <div id="mica">
         <div className="displays" style={{ visibility: window.micaState.visibility }}>
           <div className="blur">

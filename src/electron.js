@@ -10,7 +10,7 @@ if(package) package = JSON.parse(package)
 
 const appVersionFull = (package?.versionBuild ?? app.getVersion())
 const appVersion = appVersionFull.split('+')[0]
-const appVersionTag = appVersion?.split('-')[1]
+const appVersionTag = appVersion?.split('-')[1] || 'macchiato'
 const appBuild = (isDev ? "dev" : appVersionFull.split('+')[1])
 const appBuildShort = (appBuild && appBuild.length > 7 ? appBuild.slice(0, 7) : appBuild)
 
@@ -93,7 +93,6 @@ app.allowRendererProcessReuse = true
 
 // Logging
 const logPath = path.join(configFilesDir, `\\debug${(isDev ? "-dev" : "")}.log`)
-const updatePath = path.join(configFilesDir, `\\update.exe`)
 
 // Remove old log
 if (fs.existsSync(logPath)) {
@@ -487,7 +486,7 @@ const defaultSettings = {
   hdrDisplays: {},
   sdrAsMainSliderDisplays: {},
   sdrAsMainSlider: false,
-  checkForUpdates: !isDev,
+  checkForUpdates: false,
   dismissedUpdate: '',
   language: "system",
   names: {},
@@ -884,15 +883,6 @@ function processSettings(newSettings = {}, sendUpdate = true) {
       }
     }
 
-    if (newSettings.checkForUpdates !== undefined) {
-      if (newSettings.checkForUpdates === false) {
-        latestVersion = false
-        sendToAllWindows('latest-version', latestVersion);
-      } else {
-        lastCheck = false
-      }
-    }
-
     if (newSettings.isDev === true || newSettings.isDev === false) {
       rebuildTray = true
     }
@@ -904,12 +894,6 @@ function processSettings(newSettings = {}, sendUpdate = true) {
       } else if(focusTrackingID) {
         stopFocusTracking()
       }
-    }
-
-    if (newSettings.branch) {
-      lastCheck = false
-      settings.dismissedUpdate = false
-      checkForUpdates()
     }
 
     if (settings.analytics) {
@@ -2427,11 +2411,6 @@ ipcMain.on('open-url', (event, url) => {
   }
 })
 
-ipcMain.on('get-update', (event, version) => {
-  latestVersion.error = false
-  getLatestUpdate(version)
-})
-
 ipcMain.on('panel-height', (event, height) => {
   if (panelState === "overlay") return;
   panelSize.height = height + (settings?.isWin11 ? 24 : 0)
@@ -3477,7 +3456,6 @@ const toggleTray = async (doRefresh = true, isOverlay = false) => {
 
     // Send accent
     sendToAllWindows('update-colors', getAccentColors())
-    if (latestVersion) sendToAllWindows('latest-version', latestVersion);
   }
 
   if (mainWindow) {
@@ -3707,195 +3685,6 @@ ipcMain.on("windowClose", e => {
 //    App Updates
 //
 //
-
-
-
-let latestVersion = false
-let lastCheck = false
-checkForUpdates = async (force = false) => {
-  if (!force) {
-    if (!settings.checkForUpdates) return false;
-    if (lastCheck && lastCheck == new Date().getDate()) return false;
-  }
-  if (isPortable || isAppX) return false;
-  lastCheck = new Date().getDate()
-  try {
-    if (isAppX === false) {
-      console.log("Checking for updates...")
-      fetch("https://api.github.com/repos/xanderfrangos/twinkle-tray/releases").then((response) => {
-        response.json().then((releases) => {
-          let foundVersion = false
-          for (let release of releases) {
-            if (!(settings.branch === "master" && release.prerelease === true)) {
-
-              // Skip versions older than current
-              const versionParsed =  Utils.getVersionValue(release.tag_name)
-              const appVersionValue = Utils.getVersionValue(`v${app.getVersion()}`)
-              if(versionParsed < appVersionValue) continue;
-
-              foundVersion = true
-              latestVersion = {
-                releaseURL: (release.html_url),
-                version: release.tag_name,
-                downloadURL: release.assets[0]["browser_download_url"],
-                filesize: release.assets[0]["size"],
-                changelog: release.body,
-                show: false,
-                error: false
-              }
-              console.log("Found version: " + latestVersion.version)
-              break
-            }
-          }
-
-          if (foundVersion && "v" + appVersion != latestVersion.version && (settings.dismissedUpdate != latestVersion.version || force)) {
-            if (!force) latestVersion.show = true
-            console.log("Sending new version to windows.")
-            sendToAllWindows('latest-version', latestVersion)
-          }
-
-        })
-      });
-    }
-  } catch (e) {
-    console.log(e)
-  }
-}
-
-
-getLatestUpdate = async (version) => {
-  try {
-    console.log("Downloading update from: " + version.downloadURL)
-    const fs = require('fs');
-
-    latestVersion.downloading = true
-    sendToAllWindows('latest-version', latestVersion)
-
-    // Remove old update
-    if (fs.existsSync(updatePath)) {
-      try {
-        fs.unlinkSync(updatePath)
-      } catch (e) {
-        console.log("Couldn't delete old update file")
-      }
-    }
-
-    const update = await fetch(version.downloadURL)
-    await new Promise((resolve, reject) => {
-      console.log("Downloading...!")
-      const readableNodeStream = Readable.fromWeb(update.body)
-      const dest = fs.createWriteStream(updatePath)
-      //update.body.pipe(dest);
-      readableNodeStream.on('error', (err) => {
-        reject(err)
-      })
-
-      dest.on('close', () => {
-        setTimeout(() => {
-          runUpdate(version.filesize)
-        }, 1250)
-        resolve(true)
-      })
-      readableNodeStream.on('finish', function () {
-        console.log("Saved! Running...")
-      });
-
-      let size = 0
-      let lastSizeUpdate = 0
-      readableNodeStream.on('data', (chunk) => {
-        size += chunk.length
-        dest.write(chunk, (err) => {
-          if (size >= version.filesize) {
-            dest.close()
-          }
-        })
-        if (size >= lastSizeUpdate + (version.filesize * 0.01) || lastSizeUpdate === 0 || size === version.filesize) {
-          lastSizeUpdate = size
-          sendToAllWindows('updateProgress', Math.floor((size / version.filesize) * 100))
-          console.log(`Downloaded ${size / 1000}KB. [${Math.floor((size / version.filesize) * 100)}%]`)
-        }
-      })
-
-    })
-
-  } catch (e) {
-    console.log("Couldn't download update!", e)
-    latestVersion.show = true
-    latestVersion.downloading = false
-    sendToAllWindows('latest-version', latestVersion)
-  }
-}
-
-function runUpdate(expectedSize = false) {
-  try {
-
-    if (!fs.existsSync(updatePath)) {
-      throw ("Update file doesn't exist!")
-    }
-    console.log("Expected size: " + expectedSize)
-    const fileSize = fs.statSync(updatePath).size
-    if (expectedSize && fileSize != expectedSize) {
-      try {
-        // Wrong file size, will try to delete
-        fs.unlinkSync(updatePath)
-      } catch (e) {
-        throw ("Couldn't delete update file. " + e)
-      }
-      console.log("Atempted to delete update file")
-      throw (`Update is wrong file size! Expected: ${expectedSize}. Got: ${fileSize}`)
-    }
-
-    /*
-    // For testing
-    latestVersion.show = true
-    latestVersion.error = true
-    sendToAllWindows('latest-version', latestVersion)
-    return false;
-    */
-
-    const { spawn } = require('child_process');
-    let process = spawn(updatePath, {
-      detached: true,
-      stdio: 'ignore'
-    });
-
-    // IDK, try again?
-    process.once("error", () => {
-      setTimeout(() => {
-        process = spawn(updatePath, {
-          detached: true,
-          stdio: 'ignore'
-        });
-      }, 1000)
-    })
-
-    process.unref()
-    app.quit()
-  } catch (e) {
-    console.log(e)
-    latestVersion.show = true
-    latestVersion.error = true
-    sendToAllWindows('latest-version', latestVersion)
-  }
-
-}
-
-ipcMain.on('check-for-updates', () => {
-  latestVersion.error = false
-  sendToAllWindows('latest-version', latestVersion)
-  checkForUpdates(true)
-})
-
-ipcMain.on('ignore-update', (event, dismissedUpdate) => {
-  writeSettings({ dismissedUpdate })
-  latestVersion.show = false
-  sendToAllWindows('latest-version', latestVersion)
-})
-
-ipcMain.on('clear-update', (event, dismissedUpdate) => {
-  latestVersion.show = false
-  sendToAllWindows('latest-version', latestVersion)
-})
 
 
 
@@ -4425,8 +4214,6 @@ function handleBackgroundUpdate(force = false) {
   } catch (e) {
     console.error(e)
   }
-
-  if (!force) checkForUpdates(); // Ignore when forced update, since it should just be about fixing brightness.
 
   // GC
   setTimeout(() => {

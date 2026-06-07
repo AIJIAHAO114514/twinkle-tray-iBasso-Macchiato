@@ -155,16 +155,15 @@ class MacchiatoDevice extends EventEmitter {
       this._device.write(Array.from(READ_VOLUME_CMD));
 
       // Read response (multiple attempts)
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const buffer = this._device.readTimeout(300);
+          const buffer = this._device.readTimeout(50);
           if (!buffer || buffer.length < 6) continue;
 
           // Look for 0x10 marker and extract volume value
           for (let i = 0; i <= buffer.length - 2; i++) {
             if (buffer[i] === 0x10) {
               this._volume = Math.max(0, Math.min(100, buffer[i + 1]));
-              console.log(`  Volume: ${this._volume}%`);
               this.emit('volume-changed', {
                 volume: this._volume,
                 muted: this._muted
@@ -177,7 +176,6 @@ class MacchiatoDevice extends EventEmitter {
           throw e;
         }
       }
-      console.log('  Volume read timeout (no valid response)');
     } catch (e) {
       console.log('  Volume read failed:', e.message);
     }
@@ -190,15 +188,14 @@ class MacchiatoDevice extends EventEmitter {
       this._drainBufferSync();
       this._device.write(Array.from(READ_VOLUME_CMD));
 
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const buffer = this._device.readTimeout(300);
+          const buffer = this._device.readTimeout(50);
           if (!buffer || buffer.length < 6) continue;
 
           for (let i = 0; i <= buffer.length - 2; i++) {
             if (buffer[i] === 0x10) {
               this._volume = Math.max(0, Math.min(100, buffer[i + 1]));
-              console.log(`  Volume: ${this._volume}% (sync)`);
               this.emit('volume-changed', {
                 volume: this._volume,
                 muted: this._muted
@@ -211,7 +208,6 @@ class MacchiatoDevice extends EventEmitter {
           throw e;
         }
       }
-      console.log('  Volume read timeout (sync)');
     } catch (e) {
       console.log('  Volume read failed:', e.message);
     }
@@ -224,7 +220,7 @@ class MacchiatoDevice extends EventEmitter {
     if (isMockMode) {
       this._volume = targetVolume;
       if (targetVolume > 0) this._muted = false;
-      console.log('  [Mock] set volume: ' + targetVolume + '%');
+
       this.emit('volume-changed', { volume: this._volume, muted: this._muted });
       return true;
     }
@@ -242,7 +238,7 @@ class MacchiatoDevice extends EventEmitter {
         this._muted = false;
       }
 
-      console.log(`  Set volume: ${targetVolume}%`);
+
       this.emit('volume-changed', { volume: this._volume, muted: this._muted });
       return true;
     } catch (e) {
@@ -262,7 +258,7 @@ class MacchiatoDevice extends EventEmitter {
   toggleMute() {
     if (isMockMode) {
       this._muted = !this._muted;
-      console.log('  [Mock] ' + (this._muted ? 'muted' : 'unmuted'));
+
       this.emit('volume-changed', { volume: this._volume, muted: this._muted });
       return true;
     }
@@ -274,13 +270,11 @@ class MacchiatoDevice extends EventEmitter {
       this._muted = false;
       this._preMuteVolume = -1;
       this.setVolume(restoreVol);
-      console.log('Unmuted');
     } else {
       this._preMuteVolume = this._volume;
       this._muted = true;
       const cmd = buildSetVolumeCommand(0);
       this._device.write(Array.from(cmd));
-      console.log('Muted');
     }
 
     this.emit('volume-changed', { volume: this._volume, muted: this._muted });
@@ -326,9 +320,8 @@ class MacchiatoDevice extends EventEmitter {
   // ── Device data listener ──
   _startListening() {
     if (!this._device) return;
-    // node-hid supports 'data' event for devices that push reports.
-    // Macchiato requires polling instead.
-    this._startPolling();
+    // Volume only changes via our own setVolume() calls — no polling needed.
+    // Initial read was done in _readVolumeAsync() during _open().
   }
 
   _startPolling() {
