@@ -1,52 +1,45 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/xanderfrangos/twinkle-tray/master/src/assets/logo.png" width="128px" height="128px" alt="Twinkle Tray brightness slider logo">
-</p>
-<h1 align="center">Twinkle Tray</h1>
+# Twinkle Tray × iBasso Macchiato
 
-<p align="center"><a href="https://github.com/xanderfrangos/twinkle-tray/releases" target="_blank"><img src="https://img.shields.io/github/v/release/xanderfrangos/twinkle-tray" alt="Latest release" /></a> <a href="https://github.com/xanderfrangos/twinkle-tray/releases" target="_blank"><img src="https://img.shields.io/github/downloads/xanderfrangos/twinkle-tray/total" alt="Total downloads" /></a> <a href="https://hosted.weblate.org/projects/twinkle-tray/twinkle-tray/" target="_blank"><img src="https://hosted.weblate.org/widgets/twinkle-tray/-/twinkle-tray/svg-badge.svg" alt="Translations" /></a></p>
+> 基于 Twinkle Tray v1.17.2 的增强版本，集成 iBasso Macchiato USB DAC 音量控制。
 
-Twinkle Tray enables brightness control on external displays in Windows 10 & 11. Even though Windows is capable of adjusting the backlight on most monitors, it doesn't support external monitors natively. Windows also lacks any options to manage the brightness of multiple displays. This app inserts a new icon into your system tray, where you can click to have instant access to the brightness levels of all compatible displays. 
+## 项目简介
 
-<img src="https://raw.githubusercontent.com/xanderfrangos/twinkle-tray/gh-pages/assets/img/tt-screenshot-w11.jpg" alt="Win 10 brightness slider" />
+本项目在 Twinkle Tray 原有显示器亮度控制功能的基础上，新增了对 **iBasso Macchiato** 系列 USB DAC 的音量控制支持。所有改动遵循最小侵入原则——仅修改 4 个文件，原版 Twinkle Tray 的全部功能完整保留。
 
-## Features
-- Adds brightness sliders to the system tray, similar to the built-in Windows volume flyout.
-- Seamlessly blends in with Windows 10 and Windows 11. Uses your Personalization settings to match your taskbar.
-- Can automatically change monitor brightness depending on the time of day or when idle.
-- Bind hotkeys to adjust the brightness of specific or all displays.
-- Normalize backlight across different monitors.
-- Control DDC/CI features such as contrast.
-- Starts up with Windows.
+## 与原版的区别
 
-### Design & Personalization
+| 功能 | 原版 Twinkle Tray | 本项目 |
+|------|:-:|:-:|
+| 显示器亮度控制 (DDC/CI / WMI) | ✅ | ✅ |
+| 多显示器联动 | ✅ | ✅ |
+| 定时亮度调节 | ✅ | ✅ |
+| 快捷键绑定 | ✅ | ✅ |
+| HDR 支持 | ✅ | ✅ |
+| **iBasso Macchiato 音量控制** | ❌ | **✅** |
+| **托盘 Tooltip 显示 Macchiato 音量** | ❌ | **✅** |
+| **托盘双击静音 Macchiato** | ❌ | **✅** |
+| **Macchiato 热插拔自动检测** | ❌ | **✅** |
 
-Twinkle Tray will automatically adjust the look and feel to match your Windows version and preferences. Additional options are available to select the Windows version and theme of your choice.
+## 修改范围
 
-<img src="https://raw.githubusercontent.com/xanderfrangos/twinkle-tray/gh-pages/assets/img/tt-comparison.jpg" alt="Win 11 brightness slider" />
+| 文件 | 改动 | 说明 |
+|------|------|------|
+| `src/MacchiatoDevice.js` | **新增** | HID 设备通信模块 (VID=0x0661) |
+| `src/electron.js` | +42 行 | 主进程：设备初始化、IPC handler、Tooltip、双击静音 |
+| `src/components/BrightnessPanel.jsx` | +50 行 | 面板 UI：Macchiato 音量滑块 + 滚轮调节 |
+| `src/panel-preload.js` | +3 行 | IPC 状态转发 |
 
-## Download
+## 技术实现
 
-**Download the lastest version from [twinkletray.com](https://twinkletray.com/) or the [Releases page](https://github.com/xanderfrangos/twinkle-tray/releases).**
+- **HID 协议**：通过 `node-hid` 与 Macchiato 进行原始 HID 报告通信，音量读写命令对齐原厂 C# 驱动
+- **无原生模块时自动降级**：若 `node-hid` 未安装，自动切换为 Mock 模式，保证程序可运行
+- **批量发送**：100ms 间隔批量写入音量（对齐 Twinkle Tray 原生亮度同步策略）
+- **乐观静音**：UI 即时响应静音操作，无需等待轮询确认
 
-<a href="https://www.microsoft.com/store/productId/9PLJWWSV01LK" target="_blank"><img width="156" src="https://crushee.app/assets/img/ms-store.svg" alt="Get Twinkle Tray brightness slider from the Microsoft Store"></a>
+## 致谢
 
-## Install via Package Manager
-
-### Windows Package Manager
-
-```powershell
-winget install xanderfrangos.twinkletray
-```
-
-### Chocolatey (unofficial)
-
-[Chocolatey](https://chocolatey.org/) users can download and install Twinkle Tray from Chocolatey's Community Repository by installing the `twinkle-tray` package:
-
-```powershell
-choco install twinkle-tray
-```
-
-To upgrade to the latest approved package version, run the following command:
+- **[Twinkle Tray](https://github.com/xanderfrangos/twinkle-tray)** — 优秀的 Windows 显示器亮度控制工具，本项目在其 v1.17.2 基础上构建
+- **[DeepSeek](https://www.deepseek.com/)** — AI 辅助编程，完成了从需求分析到代码实现的全流程
 
 ```powershell
 choco upgrade twinkle-tray
