@@ -1,6 +1,13 @@
 # Twinkle Tray × iBasso Macchiato
 
 > 基于 Twinkle Tray v1.17.2 的增强版本，集成 iBasso Macchiato USB DAC 音量控制。
+> 
+<img width="601" height="511" alt="image" src="https://github.com/user-attachments/assets/c24649e3-f481-469e-84f6-c35fa1e84a43" />
+
+支持双击托盘静音以及点击音量符号静音
+
+<img width="477" height="380" alt="image" src="https://github.com/user-attachments/assets/a5fe4041-997a-49ec-8df9-56f8b2b7f930" />
+
 
 ## 项目简介
 
