@@ -409,7 +409,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
         </div>
       </div>
       {state.sleeping ? (<div></div>) : getMonitors()}
-      {macchiatoConnected && <hr style={{ border: 'none', borderTop: '1px solid #777', margin: '8px 0 12px' }} />}
+      {macchiatoConnected && <hr style={{ border: 'none', borderTop: '1px solid #777', margin: '8px 0 16px' }} />}
       {macchiatoConnected && (
         <div className="monitor-item" key="macchiato" style={{ height: 'auto', paddingBottom: '8px' }}
           onWheel={(e) => {
