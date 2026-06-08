@@ -23,7 +23,7 @@ jobs:
         run: npm ci
 
       - name: Build parcel & package
-        run: npm run parcel-build && npm run electron-build
+        run: npm run parcel-build && npm run electron-build -- --publish never
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
