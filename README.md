@@ -63,7 +63,10 @@
 ## 致谢
 
 - **[Twinkle Tray](https://github.com/xanderfrangos/twinkle-tray)** — 优秀的 Windows 显示器亮度控制工具，本项目在其 v1.17.2 基础上构建
+- 
 - **[DeepSeek](https://www.deepseek.com/)** — AI 辅助编程，完成了从需求分析到代码实现的全流程
+<img width="254" height="256" alt="11111" src="https://github.com/user-attachments/assets/a953ecf7-2e3b-4200-bdf0-ddeb6cb811fc" />
+
 
 ## License
 
