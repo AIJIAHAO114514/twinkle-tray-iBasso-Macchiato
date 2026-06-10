@@ -38,8 +38,8 @@ jobs:
           npm run electron-build -- --publish never
 
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2  # v2 最新版已支持 Node 24，无需改动
+        uses: softprops/action-gh-release@v2
         with:
-          files: dist/Twinkle Tray v*.exe
+          files: dist/v*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
