@@ -31,6 +31,9 @@ jobs:
 
       - name: Build and package (disable auto-publish)
         run: |
+          # 用 git tag 版本号覆盖 package.json
+          $ver = "${{ github.ref_name }}" -replace '^v', ''
+          npm version $ver --no-git-tag-version --allow-same-version
           npm run parcel-build
           npm run electron-build -- --publish never
 
