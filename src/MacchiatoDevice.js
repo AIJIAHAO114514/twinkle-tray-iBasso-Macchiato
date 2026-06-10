@@ -152,7 +152,12 @@ class MacchiatoDevice extends EventEmitter {
       await this._drainBuffer();
 
       // Send read command
-      this._device.write(Array.from(READ_VOLUME_CMD));
+      try {
+        this._device.write(Array.from(READ_VOLUME_CMD));
+      } catch (e) {
+        console.log('Read volume write failed:', e.message);
+        return;
+      }
 
       // Read response (multiple attempts)
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -274,7 +279,14 @@ class MacchiatoDevice extends EventEmitter {
       this._preMuteVolume = this._volume;
       this._muted = true;
       const cmd = buildSetVolumeCommand(0);
-      this._device.write(Array.from(cmd));
+      try {
+        this._device.write(Array.from(cmd));
+      } catch (e) {
+        console.log('Toggle mute write failed:', e.message);
+        this._muted = false;  // revert state on failure
+        this.emit('volume-changed', { volume: this._volume, muted: this._muted });
+        return false;
+      }
     }
 
     this.emit('volume-changed', { volume: this._volume, muted: this._muted });
