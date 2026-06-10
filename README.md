@@ -27,18 +27,21 @@
 | **托盘 Tooltip 显示 Macchiato 音量** | ❌ | **✅** |
 | **托盘双击静音 Macchiato** | ❌ | **✅** |
 | **Macchiato 热插拔自动检测** | ❌ | **✅** |
+| **Macchiato Web 控制台入口** | ❌ | **✅** |
+| **Electron 42 (Chromium 148)** | ❌ | **✅** |
+| **分析上报已移除** | ❌ | **✅** |
 
 ## 修改范围
 
 | 文件 | 改动 | 说明 |
 |------|------|------|
 | `src/MacchiatoDevice.js` | **新增** | HID 设备通信模块 (VID=0x0661) |
-| `src/electron.js` | +35 / -190 | 设备管理、Tooltip、双击静音、移除更新系统 |
+| `src/electron.js` | +17 / -52 | 设备管理、Tooltip、双击静音、移除更新 & 分析上报 |
 | `src/components/BrightnessPanel.jsx` | +50 / -35 | Macchiato 滑块 UI、移除更新栏 |
-| `src/components/SettingsWindow.jsx` | -55 | 移除更新设置页面 |
+| `src/components/SettingsWindow.jsx` | -60 | 移除更新设置 & 分析开关页面 |
 | `src/panel-preload.js` | +3 / -40 | IPC 转发、移除更新函数 |
 | `src/settings-preload.js` | -25 | 移除更新函数及 IPC 监听 |
-| `package.json` | +2 | 构建配置、dev 脚本 |
+| `package.json` | +2 | 构建配置、dev 脚本、npm 依赖升级 |
 | `README.md` | 重写 | 项目说明 |
 
 ## 技术实现
@@ -47,7 +50,15 @@
 - **无原生模块时自动降级**：若 `node-hid` 未安装，自动切换为 Mock 模式，保证程序可运行
 - **批量发送**：100ms 间隔批量写入音量，对齐 Twinkle Tray 原生亮度同步策略
 - **乐观静音**：UI 即时响应，写入冷却期防止轮询覆盖
-- **移除自动更新**：避免官方更新覆盖定制功能，版本标识 `v1.17.2-macchiato`
+- **移除了自动更新 & 分析上报**：避免覆盖定制功能，版本标识 `v1.17.2-macchiato`
+- **托盘右键菜单**：增加「Macchiato Web 控制台」入口，直达 iBasso UAC 设置页
+- **内存优化**：`renderer-process-limit=1`，进程数从 12 降到 5
+
+## 升级记录
+
+- **Electron 28 → 42.4.0**（Chromium 120 → 148，Node 18 → 24）
+- **11 个原生模块全部重编译**：node-hid、ddcci、win32-displayconfig 等
+- **CI自动化构建**：推送 tag 自动触发 GitHub Actions 打包发布
 
 ## 致谢
 
