@@ -72,8 +72,8 @@ const setWindowPos = () => { }
 const AccentColors = require("windows-accent-colors")
 const Acrylic = require("acrylic")
 
-const ActiveWindow = require('@paymoapp/active-window').default;
-ActiveWindow.initialize()
+// @paymoapp/active-window 原生模块不兼容，用 mock 替代（仅影响窗口焦点追踪/Profiles 功能）
+const ActiveWindow = { initialize: () => {}, subscribe: (cb) => { return 0; }, unsubscribe: (id) => {} };
 
 const reg = require('native-reg');
 const Color = require('color')
@@ -1325,7 +1325,9 @@ async function hotkeyOverlayShow() {
   await toggleTray(true, true)
 
   if (settings?.isWin11) {
-    const panelHeight = 14 + 36 + (28 * monitorCount)
+    // Macchiato row adds ~52px in overlay mode (28px slider + 24px separator/spacing)
+    const macchiatoExtra = (macchiatoDevice?.connected ? 52 : 0)
+    const panelHeight = 14 + 36 + (28 * monitorCount) + macchiatoExtra
     const panelWidth = 216
     const primaryDisplay = screen.getPrimaryDisplay()
 
@@ -3327,6 +3329,8 @@ function setTrayMenu() {
     getPausableSeparatorMenuItem(),
     { label: T.t("GENERIC_REFRESH_DISPLAYS"), type: 'normal', click: () => refreshMonitors(true, true) },
     { label: T.t("GENERIC_SETTINGS"), type: 'normal', click: createSettings },
+    { type: 'separator' },
+    { label: 'Macchiato Web 控制台', type: 'normal', click: () => require('electron').shell.openExternal('https://ibasso.cn/uac/#/device/Macchiato') },
     { type: 'separator' },
     getDebugTrayMenuItems(),
     { label: T.t("GENERIC_QUIT"), type: 'normal', click: quitApp }

@@ -343,21 +343,32 @@ class MacchiatoDevice extends EventEmitter {
   // ── Device hotplug watcher ──
   startDeviceWatcher() {
     this._stopDeviceWatcher();
-    this._deviceWatcher = setInterval(() => {
-      const devices = HID.devices();
-      const found = devices.some(d =>
-        d.vendorId === VENDOR_ID && PRODUCT_IDS.includes(d.productId)
-      );
 
-      if (found && !this._connected) {
-        console.log('Device inserted');
-        this.findAndOpen();
-      } else if (!found && this._connected) {
-        console.log('Device removed');
-        this._connected = false;
-        this._volume = -1;
-        this._stopPolling();
-        this.emit('disconnected');
+    // Mock 模式：HID 不可用，跳过真实设备检测
+    if (isMockMode) {
+      console.log('Device watcher: mock mode – hotplug detection disabled');
+      return;
+    }
+
+    this._deviceWatcher = setInterval(() => {
+      try {
+        const devices = HID.devices();
+        const found = devices.some(d =>
+          d.vendorId === VENDOR_ID && PRODUCT_IDS.includes(d.productId)
+        );
+
+        if (found && !this._connected) {
+          console.log('Device inserted');
+          this.findAndOpen();
+        } else if (!found && this._connected) {
+          console.log('Device removed');
+          this._connected = false;
+          this._volume = -1;
+          this._stopPolling();
+          this.emit('disconnected');
+        }
+      } catch (e) {
+        console.log('Device watcher error:', e.message);
       }
     }, 500);
   }

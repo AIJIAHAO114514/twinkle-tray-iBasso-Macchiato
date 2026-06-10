@@ -3,33 +3,33 @@ name: Build & Release
 on:
   push:
     tags:
-      - 'v*'               # 推送 v1.0.0, v2.3.4-beta 等标签时自动触发
-  workflow_dispatch:       # 允许在 Actions 页面手动触发
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout 代码
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 安装 Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: npm ci
 
-      - name: 构建前端资源并打包 Electron 应用
-        # --publish never 禁止 electron-builder 自动上传到 GitHub Release
-        run: npm run parcel-build && npm run electron-build -- --publish never
+      - name: Build and package (disable auto-publish)
+        run: |
+          npm run parcel-build
+          npm run electron-build -- --publish never
 
-      - name: 上传到 GitHub Release
+      - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          # 匹配 dist 目录下生成的 exe 安装包
           files: dist/Twinkle Tray v*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
