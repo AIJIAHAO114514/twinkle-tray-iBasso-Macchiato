@@ -20,7 +20,10 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm ci
+        shell: pwsh
+        run: |
+          $env:CL = "/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS"
+          npm ci
 
       - name: Build and package (disable auto-publish)
         run: |
