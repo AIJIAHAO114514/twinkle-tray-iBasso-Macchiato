@@ -129,7 +129,6 @@ export default class SettingsWindow extends PureComponent {
             updateInterval: (window.settings.updateInterval || 500),
             adjustmentTimeIndividualDisplays: false,
             languages: [],
-            analytics: false,
             useAcrylic: true,
             scrollShortcut: true,
             extendedDDCCI: {
@@ -993,7 +992,6 @@ export default class SettingsWindow extends PureComponent {
         const language = (settings.language || "system")
         const hotkeys = (settings.hotkeys || [])
         const hotkeyPercent = (settings.hotkeyPercent || 10)
-        const analytics = settings.analytics
         const useAcrylic = settings.useAcrylic
         const scrollShortcut = settings.scrollShortcut
         this.setState({
@@ -1012,7 +1010,6 @@ export default class SettingsWindow extends PureComponent {
             language,
             hotkeys,
             hotkeyPercent,
-            analytics,
             useAcrylic,
             scrollShortcut
         }, () => {
@@ -1138,8 +1135,6 @@ export default class SettingsWindow extends PureComponent {
                                             </div>
                                         </div>
                                     )} />
-
-                                    <SettingsOption title={T.t("SETTINGS_GENERAL_ANALYTICS_TITLE")} description={T.h("SETTINGS_GENERAL_ANALYTICS_DESC", '<a href="javascript:window.openURL(\'privacy-policy\')">' + T.t("SETTINGS_GENERAL_ANALYTICS_LINK") + '</a>')} input={this.renderToggle("analytics")} />
 
                                 </div>
 

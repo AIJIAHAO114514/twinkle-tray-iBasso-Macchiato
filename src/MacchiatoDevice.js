@@ -266,7 +266,7 @@ class MacchiatoDevice extends EventEmitter {
     if (!this._device) return false;
 
     if (this._muted) {
-      const restoreVol = this._preMuteVolume > 0 ? this._preMuteVolume : 50;
+      const restoreVol = this._preMuteVolume >= 0 ? this._preMuteVolume : 50;
       this._muted = false;
       this._preMuteVolume = -1;
       this.setVolume(restoreVol);
@@ -344,7 +344,7 @@ class MacchiatoDevice extends EventEmitter {
   startDeviceWatcher() {
     this._stopDeviceWatcher();
 
-    // Mock 模式：HID 不可用，跳过真实设备检测
+    // Mock mode: HID unavailable, skip real device detection
     if (isMockMode) {
       console.log('Device watcher: mock mode – hotplug detection disabled');
       return;

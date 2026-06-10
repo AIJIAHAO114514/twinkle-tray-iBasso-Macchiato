@@ -57,6 +57,8 @@ require("v8").setFlagsFromString('--expose_gc'); global.gc = require("vm").runIn
 
 // Remove window animations
 app.commandLine.appendSwitch('wm-window-animations-disabled');
+// Single renderer process to reduce memory footprint
+app.commandLine.appendSwitch('renderer-process-limit', '1');
 
 let updateKnownDisplaysTimeout
 
@@ -72,7 +74,7 @@ const setWindowPos = () => { }
 const AccentColors = require("windows-accent-colors")
 const Acrylic = require("acrylic")
 
-// @paymoapp/active-window 原生模块不兼容，用 mock 替代（仅影响窗口焦点追踪/Profiles 功能）
+// active-window native module incompatible; mock fallback (only affects window focus tracking / Profiles)
 const ActiveWindow = { initialize: () => {}, subscribe: (cb) => { return 0; }, unsubscribe: (id) => {} };
 
 const reg = require('native-reg');
@@ -89,7 +91,7 @@ let lastKnownDisplays
 
 const SunCalc = require('suncalc')
 
-// app.allowRendererProcessReuse 在 Electron 12 后就已被移除
+// app.allowRendererProcessReuse was removed after Electron 12
 
 // Logging
 const logPath = path.join(configFilesDir, `\\debug${(isDev ? "-dev" : "")}.log`)
@@ -401,35 +403,6 @@ function willPauseMouseEvents(time = 10000) {
 
 
 
-// Analytics
-let analyticsInterval = false
-let analyticsFrequency = 1000 * 60 * 29 // 29 minutes
-let lastAnalyticsPing = 0
-
-function pingAnalytics() {
-  // Skip if too recent
-  if (Date.now() < lastAnalyticsPing + (1000 * 60 * 28)) return false;
-
-  const analytics = require('ga4-mp').createClient("Y1YTliQdTL-moveI0z1TLA", "G-BQ22ZK4BPY", settings.uuid)
-  console.log("\x1b[34mAnalytics:\x1b[0m sending with UUID " + settings.uuid)
-
-  let events = []
-  events.push({
-    name: "page_view",
-    params: {
-      page_location: app.name + "/" + "v" + appVersion + "/" + (appBuild ? appBuild : ""),
-      page_title: app.name + "/" + "v" + appVersion,
-      page_referrer: app.name,
-      os_version: require("os").release(),
-      app_type: app.name,
-      app_version: appVersion,
-      engagement_time_msec: 1
-    }
-  })
-  analytics.send(events)
-  lastAnalyticsPing = Date.now()
-}
-
 let monitors = {}
 let mainWindow;
 let tray = null
@@ -490,7 +463,6 @@ const defaultSettings = {
   dismissedUpdate: '',
   language: "system",
   names: {},
-  analytics: !isDev,
   scrollShortcut: true,
   scrollShortcutAmount: 2,
   scrollFlyoutAmount: 2,
@@ -893,19 +865,6 @@ function processSettings(newSettings = {}, sendUpdate = true) {
         if(!focusTrackingID) startFocusTracking();
       } else if(focusTrackingID) {
         stopFocusTracking()
-      }
-    }
-
-    if (settings.analytics) {
-      pingAnalytics()
-      if (analyticsInterval) {
-        clearInterval(analyticsInterval)
-      }
-      analyticsInterval = setInterval(pingAnalytics, analyticsFrequency)
-    } else {
-      analytics = false
-      if (analyticsInterval) {
-        clearInterval(analyticsInterval)
       }
     }
 
