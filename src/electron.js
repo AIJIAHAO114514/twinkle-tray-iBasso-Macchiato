@@ -89,7 +89,7 @@ let lastKnownDisplays
 
 const SunCalc = require('suncalc')
 
-app.allowRendererProcessReuse = true
+// app.allowRendererProcessReuse 在 Electron 12 后就已被移除
 
 // Logging
 const logPath = path.join(configFilesDir, `\\debug${(isDev ? "-dev" : "")}.log`)
