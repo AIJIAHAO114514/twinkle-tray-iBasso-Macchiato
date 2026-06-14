@@ -81,6 +81,7 @@ const reg = require('native-reg');
 const Color = require('color')
 const Translate = require('./Translate');
 const MacchiatoDevice = require('./MacchiatoDevice');
+const { isCtrlPressed } = require('./modules/key-state');
 const { EventEmitter } = require("events");
 
 const isReallyWin11 = (require("os").release()?.split(".")[2] * 1) >= 22000
@@ -326,13 +327,32 @@ function enableMouseEvents() {
           const delta = settings.invertScroll ? -Math.round(event.delta) : Math.round(event.delta);
           const amount = delta * settings.scrollShortcutAmount;
 
-          //refreshMonitors()
-          setRecentlyInteracted(true)
-          updateAllBrightness(amount)
+          // Check if Ctrl is held — if so, adjust DAC volume instead of brightness
+          if (isCtrlPressed() && macchiatoDevice && macchiatoDevice.connected) {
+            // Ctrl + scroll: adjust iBasso Macchiato DAC volume
+            setRecentlyInteracted(true)
+            macchiatoDevice.adjustVolume(amount)
+            // Update panel with new volume state
+            if (mainWindow) {
+              mainWindow.webContents.send('macchiato-state-changed', {
+                volume: macchiatoDevice.volume,
+                muted: macchiatoDevice.muted,
+                connected: true
+              });
+            }
+            // If panel isn't open, use the overlay (so user sees volume feedback)
+            if (panelState !== "visible") {
+              hotkeyOverlayStart(undefined, true)
+            }
+          } else {
+            // Normal scroll: adjust monitor brightness
+            setRecentlyInteracted(true)
+            updateAllBrightness(amount)
 
-          // If panel isn't open, use the overlay
-          if (panelState !== "visible") {
-            hotkeyOverlayStart(undefined, true)
+            // If panel isn't open, use the overlay
+            if (panelState !== "visible") {
+              hotkeyOverlayStart(undefined, true)
+            }
           }
 
           pauseMonitorUpdates() // Pause monitor updates to prevent judder

@@ -1,0 +1,19 @@
+{
+  "name": "key-state",
+  "version": "1.0.0",
+  "description": "Win32 GetAsyncKeyState via N-API — zero-overhead Ctrl key detection",
+  "main": "index.js",
+  "scripts": {
+    "rebuild": "node-gyp rebuild",
+    "install": "node-gyp rebuild"
+  },
+  "dependencies": {
+    "bindings": "1.5.0",
+    "node-addon-api": "^7.0.0"
+  },
+  "files": [
+    "index.js",
+    "binding.gyp",
+    "key-state.cc"
+  ]
+}
