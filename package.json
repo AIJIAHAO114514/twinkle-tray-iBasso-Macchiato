@@ -47,6 +47,7 @@
                          "windows-accent-colors":  "^1.0.1",
                          "windows-hdr":  "file:src/modules/windows-hdr",
                          "wmi-bridge":  "file:src/modules/wmi-bridge",
+                         "key-state":  "file:src/modules/key-state",
                          "wmi-client":  "^0.5.0"
                      },
     "optionalDependencies":  {
@@ -84,6 +85,10 @@
                                 "node_modules/@hensm/ddcci/build/Release/ddcci.node",
                                 "!src/modules/node-ddcci/build",
                                 "src/modules/node-ddcci/build/Release/ddcci.node",
+                                "!src/modules/key-state/build",
+                                "src/modules/key-state/build/Release/key_state.node",
+                                "src/modules/key-state/index.js",
+                                "src/modules/key-state/package.json",
                                 "!node_modules/node-addon-api/doc",
                                 "!node_modules/win32-displayconfig/node_modules*",
                                 "!node_modules/global-mouse-events/node_modules",

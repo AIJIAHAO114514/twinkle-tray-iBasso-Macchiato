@@ -27,7 +27,22 @@ jobs:
         shell: pwsh
         run: |
           $env:CL = "/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS"
-          npm ci
+          # 先安装依赖，跳过 postinstall（electron-builder install-app-deps），
+          # 因为某些 package.json 可能包含 BOM 头导致 JSON 解析失败
+          npm ci --ignore-scripts
+
+          # 清理 node_modules 中所有 package.json 的 BOM 头（U+FEFF）
+          Get-ChildItem -Recurse -Filter 'package.json' -Path node_modules | ForEach-Object {
+              $content = [System.IO.File]::ReadAllText($_.FullName)
+              if ($content.Length -gt 0 -and [int]$content[0] -eq 0xFEFF) {
+                  $clean = $content.Substring(1)
+                  [System.IO.File]::WriteAllText($_.FullName, $clean, [System.Text.UTF8Encoding]::new($false))
+                  Write-Host "✓ Fixed BOM in $($_.FullName)"
+              }
+          }
+
+          # 手动运行 postinstall（electron-builder install-app-deps）——此时已无 BOM
+          npm run postinstall
 
       - name: Build and package (disable auto-publish)
         run: |
