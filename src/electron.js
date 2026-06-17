@@ -327,9 +327,17 @@ function enableMouseEvents() {
           const delta = settings.invertScroll ? -Math.round(event.delta) : Math.round(event.delta);
           const amount = delta * settings.scrollShortcutAmount;
 
-          // Check if Ctrl is held — if so, adjust DAC volume instead of brightness
-          if (isCtrlPressed() && macchiatoDevice && macchiatoDevice.connected) {
-            // Ctrl + scroll: adjust iBasso Macchiato DAC volume
+          // Ctrl + scroll: adjust monitor brightness (explicit action, less frequent)
+          if (isCtrlPressed()) {
+            setRecentlyInteracted(true)
+            updateAllBrightness(amount)
+
+            // If panel isn't open, use the overlay
+            if (panelState !== "visible") {
+              hotkeyOverlayStart(undefined, true)
+            }
+          } else if (macchiatoDevice && macchiatoDevice.connected) {
+            // Normal scroll (no modifier): adjust iBasso Macchiato DAC volume
             setRecentlyInteracted(true)
             macchiatoDevice.adjustVolume(amount)
             // Update panel with new volume state
@@ -341,15 +349,6 @@ function enableMouseEvents() {
               });
             }
             // If panel isn't open, use the overlay (so user sees volume feedback)
-            if (panelState !== "visible") {
-              hotkeyOverlayStart(undefined, true)
-            }
-          } else {
-            // Normal scroll: adjust monitor brightness
-            setRecentlyInteracted(true)
-            updateAllBrightness(amount)
-
-            // If panel isn't open, use the overlay
             if (panelState !== "visible") {
               hotkeyOverlayStart(undefined, true)
             }
