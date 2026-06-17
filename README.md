@@ -28,7 +28,8 @@
 | **托盘双击静音 Macchiato** | ❌ | **✅** |
 | **Macchiato 热插拔自动检测** | ❌ | **✅** |
 | **Macchiato Web 控制台入口** | ❌ | **✅** |
-| **Ctrl+滚动调节 Macchiato 音量** | ❌ | **✅** |
+| **滚轮调节 Macchiato 音量** | ❌ | **✅** |
+| **Ctrl+滚轮调节显示器亮度** | — | **✅** |
 | **Electron 42 (Chromium 148)** | ❌ | **✅** |
 | **分析上报已移除** | ❌ | **✅** |
 
@@ -37,7 +38,7 @@
 | 文件 | 改动 | 说明 |
 |------|------|------|
 | `src/MacchiatoDevice.js` | **新增** | HID 设备通信模块 (VID=0x0661) |
-| `src/electron.js` | +42 / -58 | 设备管理、Tooltip、双击静音、Ctrl+滚动音量、移除更新 & 分析上报 |
+| `src/electron.js` | +42 / -58 | 设备管理、Tooltip、双击静音、滚轮音量 + Ctrl+滚轮亮度、移除更新 & 分析上报 |
 | `src/modules/key-state/` | **新增** | N-API 原生模块，封装 GetAsyncKeyState，零开销同步检测 Ctrl 键 |
 | `src/components/BrightnessPanel.jsx` | +50 / -35 | Macchiato 滑块 UI、移除更新栏 |
 | `src/components/SettingsWindow.jsx` | -60 | 移除更新设置 & 分析开关页面 |
@@ -54,7 +55,7 @@
 - **乐观静音**：UI 即时响应，写入冷却期防止轮询覆盖
 - **移除了自动更新 & 分析上报**：避免覆盖定制功能，版本标识 `v1.17.2-macchiato`
 - **托盘右键菜单**：增加「Macchiato Web 控制台」入口，直达 iBasso UAC 设置页
-- **Ctrl+滚动**：托盘上按住 `Ctrl` 滚动滚轮 → 调节 Macchiato 音量；不按则调节亮度（原有行为）。通过自研 N-API 原生模块 `key-state` 同步检测 Ctrl 键状态，无子进程、无轮询、延迟 < 1µs
+- **滚轮控制**：托盘上直接滚动滚轮 → 调节 Macchiato 音量（常用操作）；按住 `Ctrl` 滚动 → 调节显示器亮度。通过自研 N-API 原生模块 `key-state` 同步检测 Ctrl 键状态，无子进程、无轮询、延迟 < 1µs
 - **内存优化**：`renderer-process-limit=1`，进程数从 12 降到 5
 
 ## 升级记录
