@@ -30,6 +30,7 @@
 | **Macchiato Web 控制台入口** | ❌ | **✅** |
 | **滚轮调节 Macchiato 音量** | ❌ | **✅** |
 | **Ctrl+滚轮调节显示器亮度** | — | **✅** |
+| **OSD overlay 拆分（亮度/音量独立）** | ❌ | **✅** |
 | **Electron 42 (Chromium 148)** | ❌ | **✅** |
 | **分析上报已移除** | ❌ | **✅** |
 
@@ -38,11 +39,12 @@
 | 文件 | 改动 | 说明 |
 |------|------|------|
 | `src/MacchiatoDevice.js` | **新增** | HID 设备通信模块 (VID=0x0661) |
-| `src/electron.js` | +42 / -58 | 设备管理、Tooltip、双击静音、滚轮音量 + Ctrl+滚轮亮度、移除更新 & 分析上报 |
+| `src/electron.js` | +159 / -57 | 设备管理、Tooltip、双击静音、滚轮音量 + Ctrl+滚轮亮度、OSD overlay 拆分、移除更新 & 分析上报 |
 | `src/modules/key-state/` | **新增** | N-API 原生模块，封装 GetAsyncKeyState，零开销同步检测 Ctrl 键 |
-| `src/components/BrightnessPanel.jsx` | +50 / -35 | Macchiato 滑块 UI、移除更新栏 |
+| `src/components/BrightnessPanel.jsx` | +62 / -33 | Macchiato 滑块 UI、overlay 条件渲染、移除更新栏 |
 | `src/components/SettingsWindow.jsx` | -60 | 移除更新设置 & 分析开关页面 |
-| `src/panel-preload.js` | +3 / -40 | IPC 转发、移除更新函数 |
+| `src/panel-preload.js` | +9 / -40 | IPC 转发、overlay-type 事件、移除更新函数 |
+| `src/css/panel.scss` | +16 / -0 | Win10 / Win11 overlay Macchiato 高度豁免 |
 | `src/settings-preload.js` | -25 | 移除更新函数及 IPC 监听 |
 | `package.json` | +2 | 构建配置、dev 脚本、npm 依赖升级 |
 | `README.md` | 重写 | 项目说明 |
@@ -56,10 +58,12 @@
 - **移除了自动更新 & 分析上报**：避免覆盖定制功能，版本标识 `v1.17.2-macchiato`
 - **托盘右键菜单**：增加「Macchiato Web 控制台」入口，直达 iBasso UAC 设置页
 - **滚轮控制**：托盘上直接滚动滚轮 → 调节 Macchiato 音量（常用操作）；按住 `Ctrl` 滚动 → 调节显示器亮度。通过自研 N-API 原生模块 `key-state` 同步检测 Ctrl 键状态，无子进程、无轮询、延迟 < 1µs
+- **OSD overlay 拆分**：亮度和音量独立显示为两个 OSD，互不干扰。普通滚轮弹出音量 OSD，Ctrl+滚轮弹出亮度 OSD。两者可无缝切换（已显示时无需关闭再打开），Win10 风格与亮度 OSD 完全一致（竖条布局）
 - **内存优化**：`renderer-process-limit=1`，进程数从 12 降到 5
 
 ## 升级记录
 
+- **v0.2.3** — OSD overlay 拆分：亮度 OSD 与音量 OSD 独立显示，Win10 风格统一，支持无缝切换
 - **Electron 28 → 42.4.0**（Chromium 120 → 148，Node 18 → 24）
 - **11 个原生模块全部重编译**：node-hid、ddcci、win32-displayconfig 等
 - **CI自动化构建**：推送 tag 自动触发 GitHub Actions 打包发布
