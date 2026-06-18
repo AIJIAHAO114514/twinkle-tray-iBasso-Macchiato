@@ -240,6 +240,12 @@ ipc.on('display-mode', (event, mode) => {
     shouldSendHeightUpdate()
 })
 
+// Set overlay type (brightness / volume / null) — dispatched as event for React
+ipc.on('overlay-type', (event, type) => {
+    window.overlayType = type
+    window.dispatchEvent(new CustomEvent('overlayTypeChanged', { detail: type }))
+})
+
 ipc.on('request-height', () => {
     ipc.send('panel-height', window.document.getElementById("panel").offsetHeight)
 })

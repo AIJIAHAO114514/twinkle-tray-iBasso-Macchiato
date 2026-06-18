@@ -277,6 +277,14 @@ body[data-is-win11="false"] #root {
             overflow: visible;
             position: relative;
             align-items: flex-start;
+
+            // Macchiato 条目完全对齐原版 Win10 竖条风格，消除内联 style 干扰
+            &[data-macchiato="true"] {
+                height: 136px !important;
+                width: 40px !important;
+                padding-top: 0 !important;
+                padding-bottom: 0 !important;
+            }
         }
 
         &>.window-base {
@@ -634,6 +642,11 @@ body[data-is-win11="true"] {
             justify-content: flex-start;
             align-items: center;
             height: 28px;
+
+            // Macchiato 音量条目需要自适应高度，不受 28px 限制
+            &[data-macchiato="true"] {
+                height: auto;
+            }
 
             .icon {
                 font-size: 15px !important;

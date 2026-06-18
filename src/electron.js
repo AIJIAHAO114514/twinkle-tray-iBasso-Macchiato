@@ -334,7 +334,7 @@ function enableMouseEvents() {
 
             // If panel isn't open, use the overlay
             if (panelState !== "visible") {
-              hotkeyOverlayStart(undefined, true)
+              brightnessOverlayStart(undefined, true)
             }
           } else if (macchiatoDevice && macchiatoDevice.connected) {
             // Normal scroll (no modifier): adjust iBasso Macchiato DAC volume
@@ -350,7 +350,7 @@ function enableMouseEvents() {
             }
             // If panel isn't open, use the overlay (so user sees volume feedback)
             if (panelState !== "visible") {
-              hotkeyOverlayStart(undefined, true)
+              macchiatoOverlayStart(undefined, true)
             }
           }
 
@@ -1252,7 +1252,7 @@ async function doHotkey(hotkey) {
         // Show brightness overlay, if applicable
         // If panel isn't open, use the overlay
         if (showOverlay && panelState !== "visible") {
-          hotkeyOverlayStart(undefined, true)
+          brightnessOverlayStart(undefined, true)
         }
 
       } catch (e) {
@@ -1264,11 +1264,11 @@ async function doHotkey(hotkey) {
   }
 }
 
-function hotkeyOverlayStart(timeout = 3000, force = true) {
+// ── 亮度 Overlay ──
+function brightnessOverlayStart(timeout = 3000, force = true) {
   if (currentOverlayType() === "disabled") return false;
-  if (canReposition) {
-    hotkeyOverlayShow()
-  }
+  panelOverlayType = 'brightness'
+  brightnessOverlayShow()
   // Resume mouse events if disabled
   pauseMouseEvents(false)
 
@@ -1276,17 +1276,33 @@ function hotkeyOverlayStart(timeout = 3000, force = true) {
   hotkeyOverlayTimeout = setTimeout(() => hotkeyOverlayHide(force), timeout)
 }
 
-async function hotkeyOverlayShow() {
+// ── 音量 Overlay ──
+function macchiatoOverlayStart(timeout = 3000, force = true) {
+  if (currentOverlayType() === "disabled") return false;
+  if (!macchiatoDevice?.connected) return false;
+  panelOverlayType = 'volume'
+  macchiatoOverlayShow()
+  // Resume mouse events if disabled
+  pauseMouseEvents(false)
+
+  if (hotkeyOverlayTimeout) clearTimeout(hotkeyOverlayTimeout);
+  hotkeyOverlayTimeout = setTimeout(() => hotkeyOverlayHide(force), timeout)
+}
+
+// ── 亮度 Overlay 显示（原版 twinkle-tray 行为，不含 Macchiato 音量）──
+async function brightnessOverlayShow() {
   if (currentOverlayType() === "disabled") return false;
   if (!mainWindow) return false;
   if (startHideTimeout) clearTimeout(startHideTimeout);
   startHideTimeout = null;
 
-  mainWindow.showInactive()
-
   setAlwaysOnTop(true)
-  sendToAllWindows("display-mode", "overlay")
-  panelState = "overlay"
+  const isSwitch = (panelState === "overlay")  // 已显示时只需切换内容
+  sendToAllWindows("overlay-type", "brightness")
+  if (!isSwitch) {
+    sendToAllWindows("display-mode", "overlay")
+    panelState = "overlay"
+  }
   let monitorCount = 0
   Object.values(monitors).forEach((monitor) => {
     if ((monitor.type === "ddcci" || monitor.type === "studio-display" || monitor.type === "wmi") && (settings?.hideDisplays?.[monitor.key] !== true)) monitorCount++;
@@ -1300,12 +1316,12 @@ async function hotkeyOverlayShow() {
   if (settings.useAcrylic) {
     tryVibrancy(mainWindow, { theme: "#26262601", effect: "blur" })
   }
-  await toggleTray(true, true)
 
+  // 先设置正确的窗口大小，再显示（防止 0x0 窗口 showInactive 无效）
+  let overlayBounds
   if (settings?.isWin11) {
-    // Macchiato row adds ~52px in overlay mode (28px slider + 24px separator/spacing)
-    const macchiatoExtra = (macchiatoDevice?.connected ? 52 : 0)
-    const panelHeight = 14 + 36 + (28 * monitorCount) + macchiatoExtra
+    // 纯亮度 overlay，不含音量行
+    const panelHeight = 14 + 36 + (28 * monitorCount)
     const panelWidth = 216
     const primaryDisplay = screen.getPrimaryDisplay()
 
@@ -1317,41 +1333,127 @@ async function hotkeyOverlayShow() {
       gap = settings.overrideTaskbarGap
     }
 
-    const bounds = {
+    overlayBounds = {
       width: panelWidth,
       height: panelHeight,
       x: parseInt((primaryDisplay.workArea.width - panelWidth) / 2),
       y: parseInt(primaryDisplay.workArea.height - panelHeight - gap)
     }
-    mainWindow.setBounds(bounds)
   } else {
     // Win10 style
     const panelOffset = 40
-    mainWindow.setBounds({
+    overlayBounds = {
       width: 26 + (40 * monitorCount),
       height: 138,
       x: panelOffset + 10 + (panelSize.taskbar.position === "LEFT" ? panelSize.taskbar.gap : 0),
       y: panelOffset + 20
-    })
+    }
+  }
+  mainWindow.restore()
+  mainWindow.setBounds(overlayBounds)
+
+  if (!isSwitch) {
+    await toggleTray(true, true)
+    mainWindow.setBounds(overlayBounds)
+    mainWindow.showInactive()
+
+    // Dumb stuff to prevent UI flicker
+    setTimeout(() => {
+      sendToAllWindows("display-mode", "overlay")
+      setTimeout(() => {
+        mainWindow.setOpacity(1)
+      }, 33)
+    }, 66)
+  }
+}
+
+// ── 音量 Overlay 显示（完全对齐原版 twinkle-tray overlay 样式）──
+async function macchiatoOverlayShow() {
+  if (currentOverlayType() === "disabled") return false;
+  if (!mainWindow) return false;
+  if (startHideTimeout) clearTimeout(startHideTimeout);
+  startHideTimeout = null;
+
+  setAlwaysOnTop(true)
+  const isSwitch = (panelState === "overlay")
+  sendToAllWindows("overlay-type", "volume")
+  if (!isSwitch) {
+    sendToAllWindows("display-mode", "overlay")
+    panelState = "overlay"
   }
 
-  // Dumb stuff to prevent UI flicker
-  setTimeout(() => {
-    sendToAllWindows("display-mode", "overlay")
+  canReposition = false
+  if (settings.useAcrylic) {
+    tryVibrancy(mainWindow, { theme: "#26262601", effect: "blur" })
+  }
+
+  // 先设置正确的窗口大小，再显示（防止 0x0 窗口 showInactive 无效）
+  let overlayBounds
+  if (settings?.isWin11) {
+    // 音量 overlay: 标题行(14) + 行间距(36) + 滑块行(28) = 78
+    const panelHeight = 78
+    const panelWidth = 216
+    const primaryDisplay = screen.getPrimaryDisplay()
+
+    let gap = 0
+    if(detectedTaskbarHide) {
+      gap = detectedTaskbarHeight
+    }
+    if (typeof settings.overrideTaskbarGap === "number") {
+      gap = settings.overrideTaskbarGap
+    }
+
+    overlayBounds = {
+      width: panelWidth,
+      height: panelHeight,
+      x: parseInt((primaryDisplay.workArea.width - panelWidth) / 2),
+      y: parseInt(primaryDisplay.workArea.height - panelHeight - gap)
+    }
+  } else {
+    // Win10 style
+    const panelOffset = 40
+    overlayBounds = {
+      width: 66,
+      height: 138,
+      x: panelOffset + 10 + (panelSize.taskbar.position === "LEFT" ? panelSize.taskbar.gap : 0),
+      y: panelOffset + 20
+    }
+  }
+  mainWindow.restore()
+  mainWindow.setBounds(overlayBounds)
+
+  if (!isSwitch) {
+    await toggleTray(true, true)
+    mainWindow.setBounds(overlayBounds)
+    mainWindow.showInactive()
+
+    // Dumb stuff to prevent UI flicker
     setTimeout(() => {
-      mainWindow.setOpacity(1)
-    }, 33)
-  }, 66)
+      sendToAllWindows("display-mode", "overlay")
+      setTimeout(() => {
+        mainWindow.setOpacity(1)
+      }, 33)
+    }, 66)
+  }
 }
 
 function hotkeyOverlayHide(force = true) {
   if (!mainWindow) {
-    hotkeyOverlayStart(333)
+    // 窗口未就绪，根据当前 overlay 类型重试
+    if (panelOverlayType === 'volume') {
+      macchiatoOverlayStart(333)
+    } else {
+      brightnessOverlayStart(333)
+    }
     return false
   }
 
   if (!force && mainWindow && mainWindow.isFocused()) {
-    hotkeyOverlayStart(333)
+    if (panelOverlayType === 'volume') {
+      macchiatoOverlayStart(333)
+    } else {
+      brightnessOverlayStart(333)
+    }
     return false;
   }
 
@@ -1362,8 +1464,10 @@ function hotkeyOverlayHide(force = true) {
     sendToAllWindows("panelBlur")
     showPanel(false)
     sendToAllWindows("display-mode", "normal")
+    sendToAllWindows("overlay-type", null)
   }
   hotkeyOverlayTimeout = false
+  panelOverlayType = null
 
   // Pause mouse events if scroll shortcut is not enabled
   pauseMouseEvents(true)
@@ -2348,7 +2452,7 @@ ipcMain.on('update-brightness', function (event, data) {
 
   // If overlay is visible, keep it open
   if (hotkeyOverlayTimeout) {
-    hotkeyOverlayStart()
+    brightnessOverlayStart()
   }
 })
 
@@ -2473,6 +2577,7 @@ ipcMain.on('save-report', async () => {
 //
 
 let panelState = "hidden"
+let panelOverlayType = null
 let panelReady = false
 
 function createPanel(toggleOnLoad = false, isRefreshing = false, showOnLoad = true) {
@@ -3456,6 +3561,8 @@ const toggleTray = async (doRefresh = true, isOverlay = false) => {
       }
       sendMicaWallpaper()
       sendToAllWindows("display-mode", "normal")
+      sendToAllWindows("overlay-type", null)
+      panelOverlayType = null
       showPanel(true, panelSize.height)
       panelState = "visible"
       mainWindow.focus()
@@ -4357,7 +4464,7 @@ function handleCommandLine(event, argv, directory, additionalData) {
 
         // Show overlay
         if (arg.indexOf("--overlay") === 0 && panelState !== "visible") {
-          hotkeyOverlayStart()
+          brightnessOverlayStart()
         }
 
         // Show panel

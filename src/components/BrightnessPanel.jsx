@@ -24,6 +24,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
   const [macchiatoVol, setMacchiatoVol] = useState(-1)
   const [macchiatoMuted, setMacchiatoMuted] = useState(false)
   const [macchiatoConnected, setMacchiatoConnected] = useState(false)
+  const [overlayType, setOverlayType] = useState(null)
   const macchiatoPending = useRef(-1)
   const macchiatoChanged = useRef(false)
   const macchiatoCooldown = useRef(0)
@@ -195,6 +196,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     setMacchiatoMuted(e.detail.muted);
     setMacchiatoConnected(e.detail.connected);
   };
+  const overlayTypeHandler = (e) => setOverlayType(e.detail)
 
   useEffect(() => {
     resetBrightnessInterval()
@@ -211,6 +213,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     window.addEventListener("sleepUpdated", (e) => recievedSleep(e))
     window.addEventListener("isRefreshing", (e) => handleIsRefreshingUpdate(e))
     window.addEventListener("macchiatoStateChanged", macchiatoStateHandler)
+    window.addEventListener("overlayTypeChanged", overlayTypeHandler)
 
     // Update brightness every interval, if changed
     window.requestSettings()
@@ -225,6 +228,7 @@ const BrightnessPanel = memo(function BrightnessPanel() {
       window.removeEventListener("sleepUpdated")
       window.removeEventListener("isRefreshing")
       window.removeEventListener("macchiatoStateChanged", macchiatoStateHandler)
+      window.removeEventListener("overlayTypeChanged", overlayTypeHandler)
     }
   }, [])
 
@@ -408,10 +412,10 @@ const BrightnessPanel = memo(function BrightnessPanel() {
           <div title={T.t("GENERIC_SETTINGS")} className="settings" onClick={window.openSettings}>&#xE713;</div>
         </div>
       </div>
-      {state.sleeping ? (<div></div>) : getMonitors()}
-      {macchiatoConnected && <hr style={{ border: 'none', borderTop: '1px solid #777', margin: '8px 0 16px' }} />}
-      {macchiatoConnected && (
-        <div className="monitor-item" key="macchiato" style={{ height: 'auto', paddingBottom: '8px' }}
+      {state.sleeping ? (<div></div>) : (overlayType !== 'volume' ? getMonitors() : null)}
+      {overlayType === null && macchiatoConnected && <hr style={{ border: 'none', borderTop: '1px solid #777', margin: '8px 0 16px' }} />}
+      {overlayType !== 'brightness' && macchiatoConnected && (
+        <div className="monitor-item" key="macchiato" data-macchiato="true" style={{ height: 'auto', paddingTop: '3px', paddingBottom: '8px' }}
           onWheel={(e) => {
             e.preventDefault();
             const cur = macchiatoMuted ? (macchiatoVol > 0 ? macchiatoVol : 10) : macchiatoVol;
