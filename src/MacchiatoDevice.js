@@ -72,6 +72,7 @@ class MacchiatoDevice extends EventEmitter {
     this._maxReconnectAttempts = 3;
     this._pollTimer = null;
     this._deviceWatcher = null;
+    this._watcherErrorCount = 0;
   }
 
   // ── Properties ──
@@ -254,7 +255,11 @@ class MacchiatoDevice extends EventEmitter {
 
   // Adjust volume relative to current level
   adjustVolume(delta) {
-    if (this._volume < 0) return false;
+    if (this._volume < 0) {
+      // 热插拔重连后音量可能尚未异步读取完毕，先同步读取再调节
+      this.readVolume();
+      if (this._volume < 0) return false;
+    }
     const newVol = Math.max(0, Math.min(100, this._volume + delta));
     return this.setVolume(newVol);
   }
@@ -365,6 +370,7 @@ class MacchiatoDevice extends EventEmitter {
     this._deviceWatcher = setInterval(() => {
       try {
         const devices = HID.devices();
+        this._watcherErrorCount = 0;
         const found = devices.some(d =>
           d.vendorId === VENDOR_ID && PRODUCT_IDS.includes(d.productId)
         );
@@ -376,11 +382,17 @@ class MacchiatoDevice extends EventEmitter {
           console.log('Device removed');
           this._connected = false;
           this._volume = -1;
+          this._preMuteVolume = -1;
           this._stopPolling();
           this.emit('disconnected');
         }
       } catch (e) {
-        console.log('Device watcher error:', e.message);
+        this._watcherErrorCount++;
+        if (this._watcherErrorCount <= 3) {
+          console.log('Device watcher error (attempt ' + this._watcherErrorCount + '):', e.message);
+        } else {
+          console.log('Device watcher error (suppressed):', e.message);
+        }
       }
     }, 500);
   }
@@ -420,6 +432,7 @@ class MacchiatoDevice extends EventEmitter {
     this._device = null;
     this._connected = false;
     this._volume = -1;
+    this._preMuteVolume = -1;
   }
 
   // ── Release resources ──
