@@ -2450,8 +2450,8 @@ ipcMain.on('update-brightness', function (event, data) {
   setRecentlyInteracted(true)
   updateBrightness(data.index, data.level)
 
-  // If overlay is visible, keep it open
-  if (hotkeyOverlayTimeout) {
+  // If overlay is visible, keep it open (skip if volume overlay is active)
+  if (hotkeyOverlayTimeout && panelOverlayType !== 'volume') {
     brightnessOverlayStart()
   }
 })

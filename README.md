@@ -63,6 +63,7 @@
 
 ## 升级记录
 
+- **v0.2.6** — 修复 update-brightness IPC 在音量 OSD 显示期间错误触发亮度 OSD 的问题
 - **v0.2.5** — 修复 OSD 竞态条件（await 让出事件循环导致 overlay 类型错乱）、拔出设备时关闭 HID 句柄、去除冗余 async/变量
 - **v0.2.4** — 修复热插拔 Bug：设备第二次拔出后 Watcher 被意外停止，导致无法感知后续插拔
 - **v0.2.3** — OSD overlay 拆分：亮度 OSD 与音量 OSD 独立显示，Win10 风格统一，支持无缝切换
