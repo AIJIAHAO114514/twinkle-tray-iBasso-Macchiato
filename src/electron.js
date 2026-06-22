@@ -1290,7 +1290,7 @@ function macchiatoOverlayStart(timeout = 3000, force = true) {
 }
 
 // ── 亮度 Overlay 显示（原版 twinkle-tray 行为，不含 Macchiato 音量）──
-async function brightnessOverlayShow() {
+function brightnessOverlayShow() {
   if (currentOverlayType() === "disabled") return false;
   if (!mainWindow) return false;
   if (startHideTimeout) clearTimeout(startHideTimeout);
@@ -1353,7 +1353,7 @@ async function brightnessOverlayShow() {
   mainWindow.setBounds(overlayBounds)
 
   if (!isSwitch) {
-    await toggleTray(true, true)
+    toggleTray(true, true)
     mainWindow.setBounds(overlayBounds)
     mainWindow.showInactive()
 
@@ -1368,7 +1368,7 @@ async function brightnessOverlayShow() {
 }
 
 // ── 音量 Overlay 显示（完全对齐原版 twinkle-tray overlay 样式）──
-async function macchiatoOverlayShow() {
+function macchiatoOverlayShow() {
   if (currentOverlayType() === "disabled") return false;
   if (!mainWindow) return false;
   if (startHideTimeout) clearTimeout(startHideTimeout);
@@ -1423,7 +1423,7 @@ async function macchiatoOverlayShow() {
   mainWindow.setBounds(overlayBounds)
 
   if (!isSwitch) {
-    await toggleTray(true, true)
+    toggleTray(true, true)
     mainWindow.setBounds(overlayBounds)
     mainWindow.showInactive()
 

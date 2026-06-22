@@ -308,7 +308,6 @@ class MacchiatoDevice extends EventEmitter {
     return new Promise((resolve) => {
       if (!this._device) return resolve();
       try {
-        const drainBuf = Buffer.alloc(64);
         for (let i = 0; i < 10; i++) {
           try {
             this._device.readTimeout(5);
@@ -384,6 +383,7 @@ class MacchiatoDevice extends EventEmitter {
           this._volume = -1;
           this._preMuteVolume = -1;
           this._stopPolling();
+          this.closeDevice();
           this.emit('disconnected');
         }
       } catch (e) {
