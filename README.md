@@ -63,6 +63,7 @@
 
 ## 升级记录
 
+- **v0.2.4** — 修复热插拔 Bug：设备第二次拔出后 Watcher 被意外停止，导致无法感知后续插拔
 - **v0.2.3** — OSD overlay 拆分：亮度 OSD 与音量 OSD 独立显示，Win10 风格统一，支持无缝切换
 - **Electron 28 → 42.4.0**（Chromium 120 → 148，Node 18 → 24）
 - **11 个原生模块全部重编译**：node-hid、ddcci、win32-displayconfig 等

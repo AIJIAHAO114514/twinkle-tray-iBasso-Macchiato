@@ -121,7 +121,7 @@ class MacchiatoDevice extends EventEmitter {
 
   _open(deviceInfo) {
     try {
-      if (this._device) this.close();
+      if (this._device) this.closeDevice();
 
       this._device = new HID.HID(deviceInfo.path);
       this._connected = true;
@@ -412,7 +412,7 @@ class MacchiatoDevice extends EventEmitter {
     }
     this._reconnectAttempts++;
     console.log(`Reconnect attempt ${this._reconnectAttempts}`);
-    this.close();
+    this.closeDevice();
     if (this.findAndOpen()) {
       this._reconnectAttempts = 0;
       return true;
@@ -420,10 +420,8 @@ class MacchiatoDevice extends EventEmitter {
     return false;
   }
 
-  // ── Close device ──
-  close() {
-    this._stopPolling();
-    this._stopDeviceWatcher();
+  // ── Close HID handle only (keep watcher & polling alive) ──
+  closeDevice() {
     if (!isMockMode && this._device) {
       try {
         this._device.close();
@@ -433,6 +431,13 @@ class MacchiatoDevice extends EventEmitter {
     this._connected = false;
     this._volume = -1;
     this._preMuteVolume = -1;
+  }
+
+  // ── Full close (HID handle + watcher + polling) ──
+  close() {
+    this._stopPolling();
+    this._stopDeviceWatcher();
+    this.closeDevice();
   }
 
   // ── Release resources ──
