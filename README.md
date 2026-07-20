@@ -29,7 +29,7 @@
 | **Macchiato 热插拔自动检测** | ❌ | **✅** |
 | **Macchiato Web 控制台入口** | ❌ | **✅** |
 | **滚轮调节 Macchiato 音量** | ❌ | **✅** |
-| **Ctrl+滚轮调节显示器亮度** | — | **✅** |
+| **滚轮修饰键可配置** | — | **✅** |
 | **OSD overlay 拆分（亮度/音量独立）** | ❌ | **✅** |
 | **Electron 42 (Chromium 148)** | ❌ | **✅** |
 | **分析上报已移除** | ❌ | **✅** |
@@ -39,10 +39,10 @@
 | 文件 | 改动 | 说明 |
 |------|------|------|
 | `src/MacchiatoDevice.js` | **新增** | HID 设备通信模块 (VID=0x0661) |
-| `src/electron.js` | +159 / -57 | 设备管理、Tooltip、双击静音、滚轮音量 + Ctrl+滚轮亮度、OSD overlay 拆分、移除更新 & 分析上报 |
-| `src/modules/key-state/` | **新增** | N-API 原生模块，封装 GetAsyncKeyState，零开销同步检测 Ctrl 键 |
+| `src/electron.js` | +159 / -57 | 设备管理、Tooltip、双击静音、滚轮音量+亮度（修饰键可配置）、OSD overlay 拆分、移除更新 & 分析上报 |
+| `src/modules/key-state/` | **新增** | N-API 原生模块，封装 GetAsyncKeyState，支持任意虚拟键码同步检测（键盘+鼠标按钮） |
 | `src/components/BrightnessPanel.jsx` | +62 / -33 | Macchiato 滑块 UI、overlay 条件渲染、移除更新栏 |
-| `src/components/SettingsWindow.jsx` | -60 | 移除更新设置 & 分析开关页面 |
+| `src/components/SettingsWindow.jsx` | +120 | 移除更新页面；新增滚轮修饰键配置 UI（可配任意按键/鼠标按钮、双动作独立选择、清除/重置） |
 | `src/panel-preload.js` | +9 / -40 | IPC 转发、overlay-type 事件、移除更新函数 |
 | `src/css/panel.scss` | +16 / -0 | Win10 / Win11 overlay Macchiato 高度豁免 |
 | `src/settings-preload.js` | -25 | 移除更新函数及 IPC 监听 |
@@ -57,7 +57,7 @@
 - **乐观静音**：UI 即时响应，写入冷却期防止轮询覆盖
 - **移除了自动更新 & 分析上报**：避免覆盖定制功能，版本标识 `v1.17.2-macchiato`
 - **托盘右键菜单**：增加「Macchiato Web 控制台」入口，直达 iBasso UAC 设置页
-- **滚轮控制**：托盘上直接滚动滚轮 → 调节 Macchiato 音量（常用操作）；按住 `Ctrl` 滚动 → 调节显示器亮度。通过自研 N-API 原生模块 `key-state` 同步检测 Ctrl 键状态，无子进程、无轮询、延迟 < 1µs
+- **滚轮控制**：托盘上滚动滚轮快速调节音量/亮度。默认：滚轮→音量，`Ctrl`+滚轮→亮度。支持在设置中自定义修饰键（任意键盘按键或鼠标按钮），以及独立配置默认滚轮动作和修饰键滚轮动作（音量/亮度/禁用）。通过自研 N-API 原生模块 `key-state` 同步检测按键状态，无子进程、无轮询、延迟 < 1µs
 - **OSD overlay 拆分**：亮度和音量独立显示为两个 OSD，互不干扰。普通滚轮弹出音量 OSD，Ctrl+滚轮弹出亮度 OSD。两者可无缝切换（已显示时无需关闭再打开），Win10 风格与亮度 OSD 完全一致（竖条布局）
 - **内存优化**：`renderer-process-limit=1`，进程数从 12 降到 5
 

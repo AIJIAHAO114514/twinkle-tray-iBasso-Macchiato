@@ -81,7 +81,7 @@ const reg = require('native-reg');
 const Color = require('color')
 const Translate = require('./Translate');
 const MacchiatoDevice = require('./MacchiatoDevice');
-const { isCtrlPressed } = require('./modules/key-state');
+const { isCtrlPressed, isKeyPressed } = require('./modules/key-state');
 const { EventEmitter } = require("events");
 
 const isReallyWin11 = (require("os").release()?.split(".")[2] * 1) >= 22000
@@ -327,20 +327,23 @@ function enableMouseEvents() {
           const delta = settings.invertScroll ? -Math.round(event.delta) : Math.round(event.delta);
           const amount = delta * settings.scrollShortcutAmount;
 
-          // Ctrl + scroll: adjust monitor brightness (explicit action, less frequent)
-          if (isCtrlPressed()) {
+          // Determine which action to take based on modifier key state
+          const modifierKey = settings.scrollModifierKey;
+          const isModifierHeld = (modifierKey != null) && isKeyPressed(modifierKey);
+          const action = isModifierHeld
+            ? (settings.scrollModifierAction || "brightness")
+            : (settings.scrollDefaultAction || "volume");
+
+          if (action === "brightness") {
             setRecentlyInteracted(true)
             updateAllBrightness(amount)
 
-            // If panel isn't open, use the overlay
             if (panelState !== "visible") {
               brightnessOverlayStart(undefined, true)
             }
-          } else if (macchiatoDevice && macchiatoDevice.connected) {
-            // Normal scroll (no modifier): adjust iBasso Macchiato DAC volume
+          } else if (action === "volume" && macchiatoDevice && macchiatoDevice.connected) {
             setRecentlyInteracted(true)
             macchiatoDevice.adjustVolume(amount)
-            // Update panel with new volume state
             if (mainWindow) {
               mainWindow.webContents.send('macchiato-state-changed', {
                 volume: macchiatoDevice.volume,
@@ -348,7 +351,6 @@ function enableMouseEvents() {
                 connected: true
               });
             }
-            // If panel isn't open, use the overlay (so user sees volume feedback)
             if (panelState !== "visible") {
               macchiatoOverlayStart(undefined, true)
             }
@@ -484,6 +486,9 @@ const defaultSettings = {
   names: {},
   scrollShortcut: true,
   scrollShortcutAmount: 2,
+  scrollModifierKey: 17,
+  scrollDefaultAction: "volume",
+  scrollModifierAction: "brightness",
   scrollFlyoutAmount: 2,
   invertScroll: false,
   useAcrylic: false,

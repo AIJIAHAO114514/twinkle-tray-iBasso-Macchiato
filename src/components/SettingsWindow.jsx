@@ -98,6 +98,42 @@ const cleanUpKeyboardKeys = (inKey, inCode = false) => {
     return key;
 }
 
+// 虚拟键码 → 鼠标按钮名称映射
+const MOUSE_VK_NAMES = {
+    0x01: "GENERIC_MOUSE_LEFT",
+    0x02: "GENERIC_MOUSE_RIGHT",
+    0x04: "GENERIC_MOUSE_MIDDLE",
+    0x05: "GENERIC_MOUSE_X1",
+    0x06: "GENERIC_MOUSE_X2"
+};
+
+// 常见虚拟键码 → 显示名称映射（用于修饰键输入框）
+const VK_DISPLAY_NAMES = {
+    8: "Backspace", 9: "Tab", 13: "Enter",
+    16: "Shift", 17: "Ctrl", 18: "Alt", 19: "Pause",
+    20: "CapsLock", 27: "Esc", 32: "Space",
+    33: "PageUp", 34: "PageDown", 35: "End", 36: "Home",
+    37: "Left", 38: "Up", 39: "Right", 40: "Down",
+    45: "Insert", 46: "Delete",
+    91: "LWin", 92: "RWin", 93: "Menu",
+    ...MOUSE_VK_NAMES
+};
+
+const getModifierKeyDisplayName = (vk, T) => {
+    if (vk == null || vk === undefined) return "";
+    const nameKey = VK_DISPLAY_NAMES[vk];
+    if (nameKey) return T.t(nameKey);
+    if (vk >= 0x30 && vk <= 0x5A) return String.fromCharCode(vk);
+    if (vk >= 0x70 && vk <= 0x87) return "F" + (vk - 0x6F);
+    if (vk >= 96 && vk <= 105) return "Num" + (vk - 96);
+    return "VK_" + vk;
+};
+
+const getModifierPlaceholder = (vk, T) => {
+    const name = getModifierKeyDisplayName(vk, T);
+    return name || T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_HINT");
+};
+
 const defaultAction = {
     type: "set",
     target: "brightness",
@@ -131,6 +167,9 @@ export default class SettingsWindow extends PureComponent {
             languages: [],
             useAcrylic: true,
             scrollShortcut: true,
+            scrollModifierKey: 17,
+            scrollDefaultAction: "volume",
+            scrollModifierAction: "brightness",
             extendedDDCCI: {
                 contrast: 50,
                 volume: 50,
@@ -144,6 +183,7 @@ export default class SettingsWindow extends PureComponent {
         }
         this.numMonitors = 0
         this.downKeys = {}
+        this.modifierDownKeys = {}
         this.lastLevels = []
         this.onDragEnd = this.onDragEnd.bind(this);
         this.sendSettingsTimeout = false
@@ -152,6 +192,7 @@ export default class SettingsWindow extends PureComponent {
         this.addFeatureInputRef = React.createRef()
         this.addFeatureOKRef = React.createRef()
         this.addFeatureCancelRef = React.createRef()
+        this.modifierKeyRef = React.createRef()
     }
 
     sendSettingsThrottle = (newSetting = {}) => {
@@ -176,6 +217,67 @@ export default class SettingsWindow extends PureComponent {
         window.ipc.send('request-localization')
         window.reactReady = true
     }
+
+    // —— 修饰键输入处理 ——
+    handleModifierKeyDown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.modifierDownKeys = {};
+        let vk = null;
+
+        if (e.type === "mousedown") {
+            // 鼠标按钮
+            const mouseVkMap = { 0: 0x01, 1: 0x04, 2: 0x02, 3: 0x05, 4: 0x06 };
+            vk = mouseVkMap[e.button];
+        } else {
+            // 键盘按键
+            vk = e.keyCode;
+        }
+
+        if (vk != null) {
+            const name = getModifierKeyDisplayName(vk, T);
+            if (name) {
+                this.modifierDownKeys[name] = vk;
+                const newVk = vk;
+                this.setState({ scrollModifierKey: newVk });
+                this.state.rawSettings.scrollModifierKey = newVk;
+                window.sendSettings({ scrollModifierKey: newVk });
+            }
+        }
+        return false;
+    };
+
+    handleModifierKeyUp = (e) => {
+        // 仅在 keyup 时清理，mousedown 不需要
+        if (e.type === "keyup") {
+            this.modifierDownKeys = {};
+        }
+    };
+
+    clearModifierKey = () => {
+        this.modifierDownKeys = {};
+        this.setState({ scrollModifierKey: null });
+        this.state.rawSettings.scrollModifierKey = null;
+        window.sendSettings({ scrollModifierKey: null });
+        // 清除后焦点回到输入框
+        if (this.modifierKeyRef.current) {
+            this.modifierKeyRef.current.focus();
+        }
+    };
+
+    resetScrollShortcutDefaults = () => {
+        const defaults = {
+            scrollModifierKey: 17,
+            scrollDefaultAction: "volume",
+            scrollModifierAction: "brightness"
+        };
+        this.setState(defaults);
+        this.state.rawSettings = Object.assign(this.state.rawSettings, defaults);
+        window.sendSettings(defaults);
+        this.forceUpdate();
+    };
+
+    // —— 修饰键输入处理结束 ——
 
 
 
@@ -994,6 +1096,9 @@ export default class SettingsWindow extends PureComponent {
         const hotkeyPercent = (settings.hotkeyPercent || 10)
         const useAcrylic = settings.useAcrylic
         const scrollShortcut = settings.scrollShortcut
+        const scrollModifierKey = settings.scrollModifierKey
+        const scrollDefaultAction = settings.scrollDefaultAction
+        const scrollModifierAction = settings.scrollModifierAction
         this.setState({
             rawSettings: (Object.keys(settings).length > 0 ? settings : this.state.rawSettings),
             openAtLogin,
@@ -1011,7 +1116,10 @@ export default class SettingsWindow extends PureComponent {
             hotkeys,
             hotkeyPercent,
             useAcrylic,
-            scrollShortcut
+            scrollShortcut,
+            scrollModifierKey,
+            scrollDefaultAction,
+            scrollModifierAction
         }, () => {
             this.forceUpdate()
         })
@@ -1365,6 +1473,56 @@ export default class SettingsWindow extends PureComponent {
                                             }} />
                                         } />
                                         <SettingsChild title={T.t("SETTINGS_HOTKEYS_INVERT_SCROLL_TITLE")} description={T.t("SETTINGS_HOTKEYS_INVERT_SCROLL_DESC")} input={this.renderToggle("invertScroll")} />
+                                    </SettingsOption>
+                                </div>
+
+                                <div className="pageSection">
+                                    <div className="sectionTitle">{T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_SECTION")}</div>
+                                    <SettingsOption title={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_TITLE")} description={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_DESC")} content={
+                                        <div className="row hotkey-combo-input">
+                                            <input
+                                                ref={this.modifierKeyRef}
+                                                placeholder={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_HINT")}
+                                                value={getModifierKeyDisplayName(this.state.scrollModifierKey, T)}
+                                                type="text"
+                                                readOnly={true}
+                                                onKeyDown={this.handleModifierKeyDown}
+                                                onMouseDown={this.handleModifierKeyDown}
+                                                onKeyUp={this.handleModifierKeyUp}
+                                                style={{ cursor: "pointer" }}
+                                            />
+                                            <input type="button" value={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_CLEAR")} onClick={this.clearModifierKey} />
+                                        </div>
+                                    }>
+                                        <SettingsChild title={T.t("SETTINGS_HOTKEYS_SCROLL_DEFAULT_ACTION")} input={
+                                            <select value={this.state.rawSettings.scrollDefaultAction || "volume"} onChange={(e) => {
+                                                const val = e.target.value;
+                                                this.setState({ scrollDefaultAction: val });
+                                                this.state.rawSettings.scrollDefaultAction = val;
+                                                window.sendSettings({ scrollDefaultAction: val });
+                                            }}>
+                                                <option value="volume">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_VOLUME")}</option>
+                                                <option value="brightness">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_BRIGHTNESS")}</option>
+                                                <option value="none">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_NONE")}</option>
+                                            </select>
+                                        } />
+                                        <SettingsChild title={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_ACTION")} input={
+                                            <select value={this.state.rawSettings.scrollModifierAction || "brightness"} onChange={(e) => {
+                                                const val = e.target.value;
+                                                this.setState({ scrollModifierAction: val });
+                                                this.state.rawSettings.scrollModifierAction = val;
+                                                window.sendSettings({ scrollModifierAction: val });
+                                            }}>
+                                                <option value="volume">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_VOLUME")}</option>
+                                                <option value="brightness">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_BRIGHTNESS")}</option>
+                                                <option value="none">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_NONE")}</option>
+                                            </select>
+                                        } />
+                                        <SettingsChild content={
+                                            <a className="button" onClick={this.resetScrollShortcutDefaults} style={{ marginTop: "4px" }}>
+                                                {T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_RESET")}
+                                            </a>
+                                        } />
                                     </SettingsOption>
                                 </div>
 
