@@ -236,6 +236,28 @@ body[data-use-native-animation="false"] {
     .input--range {
         //padding-bottom: 15px;
     }
+
+    &.macchiato-item {
+        .icon.macchiato-mute {
+            cursor: pointer;
+        }
+
+        // Only the in-panel row wants its natural height and the extra padding.
+        // In the overlay the row has to line up with a single display exactly
+        // (28px row on Win11, 136px bar on Win10), so it is left untouched.
+        #root[data-mode="normal"] & {
+            height: auto;
+            padding-top: 3px;
+            padding-bottom: 8px;
+        }
+    }
+}
+
+// Separator between the display sliders and the DAC row.
+.macchiato-separator {
+    border: none;
+    border-top: 1px solid var(--tray-border);
+    margin: 8px 0 16px;
 }
 
 $overlayBarWidth: 11px;

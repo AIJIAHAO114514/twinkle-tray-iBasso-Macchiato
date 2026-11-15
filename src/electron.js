@@ -5,6 +5,17 @@ const path = require('path');
 
 let isDev = app.commandLine.hasSwitch("dev");
 
+// On hardened Windows builds (11 24H2/25H2) the Chromium GPU process can fail to
+// start when its sandboxed child is refused read access to the app folder:
+// "GPU process launch failed: error_code=18" looping into
+// "GPU process isn't usable. Goodbye." (Electron issues #51761 / #54382).
+// Twinkle Tray only draws CSS plus native DWM effects, so software rendering is
+// a safe default. Opt back in with --twinkle-gpu or TWINKLE_TRAY_GPU=1.
+const gpuAccelerationEnabled = app.commandLine.hasSwitch("twinkle-gpu") || process.env.TWINKLE_TRAY_GPU === "1"
+if (!gpuAccelerationEnabled) {
+  app.disableHardwareAcceleration()
+}
+
 let package = fs.readFileSync(isDev ? "package.json" : __dirname + '/../package.json')
 if(package) package = JSON.parse(package)
 
@@ -59,7 +70,6 @@ process.on("unhandledRejection", (reason) => {
   console.error("UNHANDLED REJECTION:", reason)
 })
 
-const { Readable } = require("node:stream")
 //require("os").setPriority(0, require("os").constants.priority.PRIORITY_BELOW_NORMAL)
 const { BrowserWindow, nativeTheme, systemPreferences, Menu, ipcMain, screen, globalShortcut, powerMonitor } = require('electron')
 const uuid = require('crypto').randomUUID
@@ -81,7 +91,7 @@ const { fork, exec } = require('child_process');
 const { VerticalRefreshRateContext, addDisplayChangeListener } = require("win32-displayconfig");
 const refreshCtx = new VerticalRefreshRateContext();
 
-const {WindowUtils, BrightnessKeys, MediaStatus, PowerEvents, AppStartup, DisplayBrightness} = require("tt-windows-utils")
+const {WindowUtils, BrightnessKeys, MediaStatus, PowerEvents, AppStartup, DisplayBrightness, AudioDevice, KeyState} = require("tt-windows-utils")
 const setWindowPos = () => { }
 const AccentColors = require("windows-accent-colors")
 const Acrylic = require("acrylic")
@@ -92,6 +102,7 @@ ActiveWindow.initialize()
 const reg = require('native-reg');
 const Color = require('color')
 const Translate = require('./Translate');
+const MacchiatoService = require('./services/MacchiatoService');
 const { EventEmitter } = require("events");
 
 const isReallyWin11 = (require("os").release()?.split(".")[2] * 1) >= 22000
@@ -111,7 +122,6 @@ app.allowRendererProcessReuse = true
 
 // Logging
 const logPath = path.join(configFilesDir, `\\debug${(isDev ? "-dev" : "")}.log`)
-const updatePath = path.join(configFilesDir, `\\update.exe`)
 
 // Remove old log
 if (fs.existsSync(logPath)) {
@@ -734,14 +744,8 @@ function enableMouseEvents() {
           const delta = settings.invertScroll ? -Math.round(event.delta) : Math.round(event.delta);
           const amount = delta * settings.scrollShortcutAmount;
 
-          //refreshMonitors()
           setRecentlyInteracted(true)
-          updateAllBrightness(amount)
-
-          // If panel isn't open, use the overlay
-          if (panelState !== "visible") {
-            hotkeyOverlayStart(undefined, true)
-          }
+          handleScrollAction(resolveScrollAction(), amount)
 
           pauseMonitorUpdates() // Pause monitor updates to prevent judder
           willPauseMouseEvents() // Delay pausing mouse events
@@ -808,42 +812,52 @@ function willPauseMouseEvents(time = 10000) {
   }, time)
 }
 
-
-
-
-// Analytics
-let analyticsInterval = false
-let analyticsFrequency = 1000 * 60 * 29 // 29 minutes
-let lastAnalyticsPing = 0
-
-function pingAnalytics() {
-  // Skip if too recent
-  if (Date.now() < lastAnalyticsPing + (1000 * 60 * 28)) return false;
-
-  const analytics = require('ga4-mp').createClient("Y1YTliQdTL-moveI0z1TLA", "G-BQ22ZK4BPY", settings.uuid)
-  console.log("\x1b[34mAnalytics:\x1b[0m sending with UUID " + settings.uuid)
-
-  let events = []
-  events.push({
-    name: "page_view",
-    params: {
-      page_location: app.name + "/" + "v" + appVersion + "/" + (appBuild ? appBuild : ""),
-      page_title: app.name + "/" + "v" + appVersion,
-      page_referrer: app.name,
-      os_version: require("os").release(),
-      app_type: app.name,
-      app_version: appVersion,
-      engagement_time_msec: 1
-    }
-  })
-  analytics.send(events)
-  lastAnalyticsPing = Date.now()
+// ── Tray scroll routing ──────────────────────────────────────────────
+// The modifier key is polled synchronously through GetAsyncKeyState (N-API), so
+// the decision is made inside the wheel event with no IPC round trip.
+function resolveScrollAction() {
+  const modifierKey = settings.scrollModifierKey
+  const modifierHeld = (modifierKey !== null && modifierKey !== undefined) && KeyState.isKeyPressed(modifierKey)
+  const action = modifierHeld ? settings.scrollModifierAction : settings.scrollDefaultAction
+  return (action === "volume" || action === "brightness") ? action : null
 }
+
+function handleScrollAction(action, amount) {
+  if (!action) return
+
+  if (action === "brightness") {
+    updateAllBrightness(amount)
+    if (panelState !== "visible") {
+      showOverlay("brightness")
+    }
+    return
+  }
+
+  // action === "volume"
+  if (!macchiato || !macchiato.connected) {
+    // No DAC to talk to. Fall back to the pre-existing behaviour instead of
+    // leaving the wheel dead, so unplugging the DAC cannot cost a feature.
+    updateAllBrightness(amount)
+    if (panelState !== "visible") {
+      showOverlay("brightness")
+    }
+    return
+  }
+
+  macchiato.adjustVolume(amount)
+  if (panelState !== "visible") {
+    showOverlay("volume")
+  }
+}
+
+
+
 
 let monitors = {}
 let mainWindow;
 let tray = null
 let lastTheme = false
+let macchiato = null
 
 const panelSize = {
   width: 356,
@@ -906,15 +920,20 @@ const defaultSettings = {
   extendMinimumBreakpoints: {},
   sdrAsMainSliderDisplays: {},
   sdrAsMainSlider: false,
-  checkForUpdates: !isDev,
-  dismissedUpdate: '',
   language: "system",
   names: {},
-  analytics: !isDev,
   scrollShortcut: true,
   scrollShortcutAmount: 2,
   scrollFlyoutAmount: 2,
   invertScroll: false,
+  // Scroll shortcut routing: the default action applies to a plain scroll, the
+  // modifier action applies while the configured key is held.
+  scrollDefaultAction: "volume",
+  scrollModifierAction: "brightness",
+  scrollModifierKey: 17, // VK_CONTROL
+  // Substring (case-insensitive) matched against the default audio output
+  // device name to decide whether the "active" tray icon is shown.
+  audioDeviceMatch: "macchiato",
   useAcrylic: false,
   useNativeAnimation: false,
   sleepAction: "ps",
@@ -972,7 +991,6 @@ const defaultSettings = {
   logging: true,
   profiles: [],
   uuid: uuid(),
-  branch: (appVersionTag?.indexOf?.("beta") === 0 ? "beta" : "master"),
   lightSensor: defaultLightSensorSettings,
 }
 
@@ -1373,15 +1391,6 @@ function processSettings(newSettings = {}, sendUpdate = true) {
       }
     }
 
-    if (newSettings.checkForUpdates !== undefined) {
-      if (newSettings.checkForUpdates === false) {
-        latestVersion = false
-        sendToAllWindows('latest-version', latestVersion);
-      } else {
-        lastCheck = false
-      }
-    }
-
     if (newSettings.isDev === true || newSettings.isDev === false) {
       rebuildTray = true
     }
@@ -1417,26 +1426,12 @@ function processSettings(newSettings = {}, sendUpdate = true) {
       }
     }
 
-    if (newSettings.branch) {
-      lastCheck = false
-      settings.dismissedUpdate = false
-      checkForUpdates()
-    }
     if (newSettings.lightSensor) {
       lightSensor.changeSettings(newSettings.lightSensor);
     }
 
-    if (settings.analytics) {
-      pingAnalytics()
-      if (analyticsInterval) {
-        clearInterval(analyticsInterval)
-      }
-      analyticsInterval = setInterval(pingAnalytics, analyticsFrequency)
-    } else {
-      analytics = false
-      if (analyticsInterval) {
-        clearInterval(analyticsInterval)
-      }
+    if (newSettings.audioDeviceMatch !== undefined) {
+      macchiato?.refreshAudioMatch()
     }
 
     if (rebuildTray) {
@@ -1830,7 +1825,7 @@ function applyHotkeys(monitorList = monitors) {
   sendToAllWindows('settings-updated', settings)
 }
 
-let hotkeyOverlayTimeout
+let overlayHideTimer = null
 let hotkeyThrottle = []
 let doingHotkey = false
 const hotkeyCycleIndexes = []
@@ -2001,7 +1996,7 @@ async function doHotkey(hotkey, options = {}) {
         // Show brightness overlay, if applicable
         // If panel isn't open, use the overlay
         if (showOverlay && panelState !== "visible") {
-          hotkeyOverlayStart(undefined, true)
+          showOverlay("brightness", true)
         }
 
       } catch (e) {
@@ -2013,47 +2008,29 @@ async function doHotkey(hotkey, options = {}) {
   }
 }
 
-function hotkeyOverlayStart(timeout = 3000, force = true) {
-  if (currentOverlayType() === "disabled") return false;
-  if (canReposition) {
-    hotkeyOverlayShow()
-  }
-  // Resume mouse events if disabled
-  pauseMouseEvents(false)
+// ── Overlay (OSD) ────────────────────────────────────────────────────
+// One code path for both kinds. The main process owns the state
+// (overlayKind), the renderer only renders what it is told to render, and
+// re-showing while already visible is just a resize + payload update.
+let overlayKind = null   // "brightness" | "volume" | null
 
-  if (hotkeyOverlayTimeout) clearTimeout(hotkeyOverlayTimeout);
-  hotkeyOverlayTimeout = setTimeout(() => hotkeyOverlayHide(force), timeout)
+function overlayMonitorCount() {
+  let count = 0
+  Object.values(monitors).forEach((monitor) => {
+    const supported = (monitor.type === "ddcci" || monitor.type === "studio-display" || monitor.type === "wmi" || monitor.type === "software" || usesGammaSlider(monitor))
+    if (supported && settings?.hideDisplays?.[monitor.key] !== true) count++
+  })
+  if (count && settings.linkedLevelsActive) count = 1
+  return count
 }
 
-async function hotkeyOverlayShow() {
-  if (currentOverlayType() === "disabled") return false;
-  if (!mainWindow) return false;
-  if (startHideTimeout) clearTimeout(startHideTimeout);
-  startHideTimeout = null;
-
-  mainWindow.showInactive()
-
-  setAlwaysOnTop(true)
-  sendToAllWindows("display-mode", "overlay")
-  panelState = "overlay"
-  let monitorCount = 0
-  Object.values(monitors).forEach((monitor) => {
-    if ((monitor.type === "ddcci" || monitor.type === "studio-display" || monitor.type === "wmi" || monitor.type === "software" || usesGammaSlider(monitor)) && (settings?.hideDisplays?.[monitor.key] !== true)) monitorCount++;
-  })
-
-  if (monitorCount && settings.linkedLevelsActive) {
-    monitorCount = 1
-  }
-
-  canReposition = false
-  if (settings.useAcrylic) {
-    tryVibrancy(mainWindow, { theme: "#26262601", effect: "blur" })
-  }
-  await toggleTray(true, true)
+function overlayBounds(kind) {
+  // A volume OSD occupies exactly one row, the same footprint as one display.
+  const rows = kind === "volume" ? 1 : Math.max(1, overlayMonitorCount())
 
   if (settings?.isWin11) {
-    const panelHeight = 14 + 36 + (28 * monitorCount)
     const panelWidth = 216
+    const panelHeight = 14 + 36 + (28 * rows)
     const primaryDisplay = screen.getPrimaryDisplay()
 
     // Only add gap if the taskbar is actually hidden (not taking up space).
@@ -2062,60 +2039,119 @@ async function hotkeyOverlayShow() {
     const taskbarActuallyHidden = primaryDisplay.bounds.height === primaryDisplay.workArea.height
 
     let gap = 0
-    if(taskbarActuallyHidden && detectedTaskbarHide) {
+    if (taskbarActuallyHidden && detectedTaskbarHide) {
       gap = detectedTaskbarHeight
     }
     if (typeof settings.overrideTaskbarGap === "number") {
       gap = settings.overrideTaskbarGap
     }
 
-    const bounds = {
+    return {
       width: panelWidth,
       height: panelHeight,
       x: parseInt((primaryDisplay.workArea.width - panelWidth) / 2),
       y: parseInt(primaryDisplay.workArea.height - panelHeight - gap)
     }
-    mainWindow.setBounds(bounds)
-  } else {
-    // Win10 style
-    const panelOffset = 40
-    mainWindow.setBounds({
-      width: 26 + (40 * monitorCount),
-      height: 138,
-      x: panelOffset + 10 + (panelSize.taskbar.position === "LEFT" ? panelSize.taskbar.gap : 0),
-      y: panelOffset + 20
-    })
   }
 
-  // Dumb stuff to prevent UI flicker
-  setTimeout(() => {
-    sendToAllWindows("display-mode", "overlay")
+  // Win10 style: vertical bars next to the tray
+  const panelOffset = 40
+  return {
+    width: 26 + (40 * rows),
+    height: 138,
+    x: panelOffset + 10 + (panelSize.taskbar.position === "LEFT" ? panelSize.taskbar.gap : 0),
+    y: panelOffset + 20
+  }
+}
+
+function overlayPayload() {
+  // Only the layout hint lives here. DAC values are pushed separately on
+  // 'macchiato-state', so there is one source of truth for them in the renderer.
+  return { kind: overlayKind }
+}
+
+function sendOverlayPayload() {
+  sendToAllWindows("overlay-state", overlayPayload())
+}
+
+function showOverlay(kind = "brightness", force = true, timeout = 3000) {
+  if (currentOverlayType() === "disabled") return false
+  if (!mainWindow) return false
+  if (kind === "volume" && !(macchiato && macchiato.connected)) return false
+
+  const alreadyOverlay = (panelState === "overlay")
+
+  // A pending panel auto-hide would fight the overlay.
+  if (startHideTimeout) clearTimeout(startHideTimeout)
+  startHideTimeout = null
+
+  overlayKind = kind
+  canReposition = false
+  pauseMouseEvents(false)
+
+  setAlwaysOnTop(true)
+  if (settings.useAcrylic) {
+    tryVibrancy(mainWindow, { theme: "#26262601", effect: "blur" })
+  }
+
+  // toggleTray only hands the renderer its state (it awaits nothing), so the
+  // window can be sized right after it without racing a pending promise.
+  if (!alreadyOverlay) toggleTray(true, true)
+
+  // Always fix the size before showing: a 0x0 window silently ignores
+  // showInactive().
+  const bounds = overlayBounds(kind)
+  mainWindow.restore?.()
+  mainWindow.setBounds(bounds)
+  sendOverlayPayload()
+
+  if (!alreadyOverlay) {
+    mainWindow.setBounds(bounds)
+    mainWindow.showInactive()
+    // Dumb stuff to prevent UI flicker
     setTimeout(() => {
-      mainWindow.setOpacity(1)
-    }, 33)
-  }, 66)
+      sendToAllWindows("display-mode", "overlay")
+      setTimeout(() => {
+        mainWindow.setOpacity(1)
+      }, 33)
+    }, 66)
+  } else {
+    sendToAllWindows("display-mode", "overlay")
+  }
+
+  bumpOverlayTimer(force, timeout)
+  return true
+}
+
+function bumpOverlayTimer(force = true, timeout = 3000) {
+  if (overlayHideTimer) clearTimeout(overlayHideTimer)
+  overlayHideTimer = setTimeout(() => hotkeyOverlayHide(force), timeout)
 }
 
 function hotkeyOverlayHide(force = true) {
   if (!mainWindow) {
-    hotkeyOverlayStart(333)
+    overlayHideTimer = null
     return false
   }
 
-  if (!force && mainWindow && mainWindow.isFocused()) {
-    hotkeyOverlayStart(333)
-    return false;
+  if (!force && mainWindow.isFocused()) {
+    if (overlayHideTimer) clearTimeout(overlayHideTimer)
+    overlayHideTimer = setTimeout(() => hotkeyOverlayHide(force), 333)
+    return false
   }
 
-  clearTimeout(hotkeyOverlayTimeout)
+  if (overlayHideTimer) clearTimeout(overlayHideTimer)
+  overlayHideTimer = null
+  overlayKind = null
+
   setAlwaysOnTop(false)
   canReposition = true
   if (!mainWindow.webContents.isDevToolsOpened()) {
     sendToAllWindows("panelBlur")
     showPanel(false)
     sendToAllWindows("display-mode", "normal")
+    sendToAllWindows("overlay-state", { kind: null })
   }
-  hotkeyOverlayTimeout = false
 
   // Pause mouse events if scroll shortcut is not enabled
   pauseMouseEvents(true)
@@ -2462,7 +2498,10 @@ function getTrayIconPath() {
   if (settings.icon === "mdl2" || settings.icon === "fluent") {
     icon = settings.icon
   }
-  return path.join(__dirname, `assets/tray-icons/${themeDir}/${icon}.ico`)
+  // The solid star is the "audio output is the DAC" hint, so it only applies to
+  // the default icon style.
+  const variant = (icon === "icon" && macchiato?.audioOutputMatches) ? "-active" : ""
+  return path.join(__dirname, `assets/tray-icons/${themeDir}/${icon}${variant}.ico`)
 }
 
 function getAccentColors() {
@@ -3614,8 +3653,8 @@ ipcMain.on('update-brightness', function (event, data) {
   updateBrightness(data.index, data.level)
 
   // If overlay is visible, keep it open
-  if (hotkeyOverlayTimeout) {
-    hotkeyOverlayStart()
+  if (panelState === "overlay" && overlayKind === "brightness") {
+    bumpOverlayTimer()
   }
 })
 
@@ -3665,11 +3704,6 @@ ipcMain.on('open-url', (event, url) => {
   } else if (url === "troubleshooting-features") {
     require("electron").shell.openExternal("https://github.com/xanderfrangos/twinkle-tray/wiki/Display-Detection-&-Support-Issues#disabling-monitor-detection-methods-available-in-v1140")
   }
-})
-
-ipcMain.on('get-update', (event, version) => {
-  latestVersion.error = false
-  getLatestUpdate(version)
 })
 
 ipcMain.on('panel-height', (event, height) => {
@@ -4516,6 +4550,7 @@ app.on("ready", async () => {
   await getThemeRegistry()
   //readSettings()
   getLocalization()
+  initMacchiato()
   showIntro()
   createPanel(false, true)
 
@@ -4565,6 +4600,9 @@ app.on("activate", () => {
 app.on('quit', () => {
   restoreGammaRampsOnQuit()
   try {
+    // Release the HID handle and the COM notification client before the process
+    // tears down, otherwise the thread-safe callback outlives its environment.
+    if (macchiato) macchiato.dispose()
     PowerEvents.unregisterPowerSettingNotifications()
     BrightnessKeys.unregister()
     nativeBrightnessKeysRegistered = false
@@ -4580,18 +4618,60 @@ app.on('quit', () => {
 
 //
 //
+//    Macchiato DAC
+//
+//
+
+// All device knowledge lives in MacchiatoService; this only connects it to the
+// UI concerns the main process owns (tooltip, tray image, overlay lifetime).
+function initMacchiato() {
+  if (macchiato) return
+
+  macchiato = new MacchiatoService({ getSettings: () => settings })
+
+  macchiato.on('change', state => {
+    setTrayPercent()
+    sendToAllWindows('macchiato-state', state)
+    // Keep an open volume OSD alive while the value changes, whoever changed it.
+    if (overlayKind === "volume") bumpOverlayTimer()
+  })
+
+  macchiato.on('connected', () => setTrayPercent())
+
+  macchiato.on('disconnected', () => {
+    setTrayPercent()
+    // Never leave a dead volume OSD on screen.
+    if (overlayKind === "volume") hotkeyOverlayHide(true)
+  })
+
+  macchiato.on('audio-match', () => {
+    try {
+      if (tray) tray.setImage(getTrayIconPath())
+    } catch (e) {
+      console.log(e)
+    }
+  })
+
+  macchiato.addIpc(ipcMain)
+  macchiato.init()
+}
+
+//
+//
 //    Tray
 //
 //
 
 function createTray() {
   if (tray != null) return false;
-
   const { Tray } = require('electron')
   tray = new Tray(getTrayIconPath())
-  tray.setToolTip('Twinkle Tray' + (isDev ? " (Dev)" : ""))
+  tray.setToolTip(buildTrayTooltip())
   setTrayMenu()
   tray.on("click", async () => toggleTray(true))
+  tray.on("double-click", () => {
+    if (macchiato && macchiato.connected) macchiato.toggleMute()
+  })
 
   let lastMouseMove = Date.now()
   tray.on('mouse-move', async () => {
@@ -4634,6 +4714,8 @@ function setTrayMenu() {
     getPausableSeparatorMenuItem(),
     { label: T.t("GENERIC_REFRESH_DISPLAYS"), type: 'normal', click: () => refreshMonitors(true, true) },
     { label: T.t("GENERIC_SETTINGS"), type: 'normal', click: createSettings },
+    { type: 'separator' },
+    { label: T.t("TRAY_MACCHIATO_CONSOLE"), type: 'normal', click: () => shell.openExternal("https://ibasso.cn/uac/#/device/Macchiato") },
     { type: 'separator' },
     getDebugTrayMenuItems(),
     { label: T.t("GENERIC_QUIT"), type: 'normal', click: quitApp }
@@ -4697,22 +4779,38 @@ function getDebugTrayMenuItems() {
   }
 }
 
+function buildTrayTooltip() {
+  let text = 'Twinkle Tray' + (isDev ? " (Dev)" : "")
+
+  let averagePerc = 0
+  let i = 0
+  for (let key in monitors) {
+    const monitor = monitors[key]
+    if (monitor.type === "ddcci" || monitor.type === "wmi" || monitor.type === "software" || usesGammaSlider(monitor)) {
+      if (typeof monitor.brightness !== "number") continue
+      i++
+      averagePerc += monitor.brightness
+    }
+  }
+  if (i > 0) {
+    text += ' (' + Math.round(averagePerc / i) + '%)'
+  }
+
+  if (macchiato && macchiato.connected) {
+    if (macchiato.muted) {
+      text += '\niBasso Macchiato: ' + T.t("TRAY_MACCHIATO_MUTED")
+    } else {
+      const volume = macchiato.volume === null ? "--" : macchiato.volume
+      text += '\niBasso Macchiato: ' + volume + '%'
+    }
+  }
+
+  return text
+}
+
 function setTrayPercent() {
   try {
-    if (tray) {
-      let averagePerc = 0
-      let i = 0
-      for (let key in monitors) {
-        if (monitors[key].type === "ddcci" || monitors[key].type === "wmi" || monitors[key].type === "software" || usesGammaSlider(monitors[key])) {
-          i++
-          averagePerc += monitors[key].brightness
-        }
-      }
-      if (i > 0) {
-        averagePerc = Math.round(averagePerc / i)
-        tray.setToolTip('Twinkle Tray' + (isDev ? " (Dev)" : "") + ' (' + averagePerc + '%)')
-      }
-    }
+    if (tray) tray.setToolTip(buildTrayTooltip())
   } catch (e) {
     console.log(e)
   }
@@ -4750,7 +4848,6 @@ const toggleTray = async (doRefresh = true, isOverlay = false) => {
 
     // Send accent
     sendToAllWindows('update-colors', getAccentColors())
-    if (latestVersion) sendToAllWindows('latest-version', latestVersion);
   }
 
   if (mainWindow) {
@@ -5004,199 +5101,11 @@ ipcMain.on("windowToggleMaximize", e => {
 ipcMain.on("windowClose", e => {
   BrowserWindow.fromWebContents(e.sender).close()
 })
-
 //
 //
-//    App Updates
+//    App updates: removed in this build
 //
 //
-
-
-
-let latestVersion = false
-let lastCheck = false
-checkForUpdates = async (force = false) => {
-  if (!force) {
-    if (!settings.checkForUpdates) return false;
-    if (lastCheck && lastCheck == new Date().getDate()) return false;
-  }
-  if (isPortable || isAppX) return false;
-  lastCheck = new Date().getDate()
-  try {
-    if (isAppX === false) {
-      console.log("Checking for updates...")
-      fetch("https://api.github.com/repos/xanderfrangos/twinkle-tray/releases").then((response) => {
-        response.json().then((releases) => {
-          let foundVersion = false
-          for (let release of releases) {
-            if (!(settings.branch === "master" && release.prerelease === true)) {
-
-              // Skip versions older than current
-              const versionParsed =  Utils.getVersionValue(release.tag_name)
-              const appVersionValue = Utils.getVersionValue(`v${app.getVersion()}`)
-              if(versionParsed < appVersionValue) continue;
-
-              foundVersion = true
-              latestVersion = {
-                releaseURL: (release.html_url),
-                version: release.tag_name,
-                downloadURL: release.assets[0]["browser_download_url"],
-                filesize: release.assets[0]["size"],
-                changelog: release.body,
-                show: false,
-                error: false
-              }
-              console.log("Found version: " + latestVersion.version)
-              break
-            }
-          }
-
-          if (foundVersion && "v" + appVersion != latestVersion.version && (settings.dismissedUpdate != latestVersion.version || force)) {
-            if (!force) latestVersion.show = true
-            console.log("Sending new version to windows.")
-            sendToAllWindows('latest-version', latestVersion)
-          }
-
-        })
-      });
-    }
-  } catch (e) {
-    console.log(e)
-  }
-}
-
-
-getLatestUpdate = async (version) => {
-  try {
-    console.log("Downloading update from: " + version.downloadURL)
-    const fs = require('fs');
-
-    latestVersion.downloading = true
-    sendToAllWindows('latest-version', latestVersion)
-
-    // Remove old update
-    if (fs.existsSync(updatePath)) {
-      try {
-        fs.unlinkSync(updatePath)
-      } catch (e) {
-        console.log("Couldn't delete old update file")
-      }
-    }
-
-    const update = await fetch(version.downloadURL)
-    if (!update.ok || !update.body) {
-      throw new Error(`Update download failed with HTTP ${update.status}`)
-    }
-
-    console.log("Downloading...!")
-    const readableNodeStream = Readable.fromWeb(update.body)
-    const dest = fs.createWriteStream(updatePath)
-    let size = 0
-    let lastSizeUpdate = 0
-
-    readableNodeStream.on('data', (chunk) => {
-      size += chunk.length
-      if (size >= lastSizeUpdate + (version.filesize * 0.01) || lastSizeUpdate === 0 || size === version.filesize) {
-        lastSizeUpdate = size
-        sendToAllWindows('updateProgress', Math.floor((size / version.filesize) * 100))
-        console.log(`Downloaded ${size / 1000}KB. [${Math.floor((size / version.filesize) * 100)}%]`)
-      }
-    })
-
-    await new Promise((resolve, reject) => {
-      readableNodeStream.once('error', reject)
-      dest.once('error', reject)
-      dest.once('finish', resolve)
-      readableNodeStream.pipe(dest)
-    })
-
-    if (size !== version.filesize) {
-      throw new Error(`Update download was incomplete. Expected ${version.filesize} bytes, got ${size}`)
-    }
-
-    console.log("Saved! Running...")
-    setTimeout(() => {
-      runUpdate(version.filesize)
-    }, 1250)
-
-  } catch (e) {
-    console.log("Couldn't download update!", e)
-    latestVersion.show = true
-    latestVersion.downloading = false
-    sendToAllWindows('latest-version', latestVersion)
-  }
-}
-
-function runUpdate(expectedSize = false) {
-  try {
-
-    if (!fs.existsSync(updatePath)) {
-      throw ("Update file doesn't exist!")
-    }
-    console.log("Expected size: " + expectedSize)
-    const fileSize = fs.statSync(updatePath).size
-    if (expectedSize && fileSize != expectedSize) {
-      try {
-        // Wrong file size, will try to delete
-        fs.unlinkSync(updatePath)
-      } catch (e) {
-        throw ("Couldn't delete update file. " + e)
-      }
-      console.log("Atempted to delete update file")
-      throw (`Update is wrong file size! Expected: ${expectedSize}. Got: ${fileSize}`)
-    }
-
-    /*
-    // For testing
-    latestVersion.show = true
-    latestVersion.error = true
-    sendToAllWindows('latest-version', latestVersion)
-    return false;
-    */
-
-    const { spawn } = require('child_process');
-    let process = spawn(updatePath, {
-      detached: true,
-      stdio: 'ignore'
-    });
-
-    // IDK, try again?
-    process.once("error", () => {
-      setTimeout(() => {
-        process = spawn(updatePath, {
-          detached: true,
-          stdio: 'ignore'
-        });
-      }, 1000)
-    })
-
-    process.unref()
-    app.quit()
-  } catch (e) {
-    console.log(e)
-    latestVersion.show = true
-    latestVersion.error = true
-    sendToAllWindows('latest-version', latestVersion)
-  }
-
-}
-
-ipcMain.on('check-for-updates', () => {
-  latestVersion.error = false
-  sendToAllWindows('latest-version', latestVersion)
-  checkForUpdates(true)
-})
-
-ipcMain.on('ignore-update', (event, dismissedUpdate) => {
-  writeSettings({ dismissedUpdate })
-  latestVersion.show = false
-  sendToAllWindows('latest-version', latestVersion)
-})
-
-ipcMain.on('clear-update', (event, dismissedUpdate) => {
-  latestVersion.show = false
-  sendToAllWindows('latest-version', latestVersion)
-})
 
 
 
@@ -5847,8 +5756,6 @@ function handleBackgroundUpdate(force = false) {
     console.error(e)
   }
 
-  if (!force) checkForUpdates(); // Ignore when forced update, since it should just be about fixing brightness.
-
   // GC
   setTimeout(() => {
     try { global.gc() } catch (e) { }
@@ -6009,7 +5916,7 @@ function handleCommandLine(event, argv, directory, additionalData) {
 
         // Show overlay
         if (arg.indexOf("--overlay") === 0 && panelState !== "visible") {
-          hotkeyOverlayStart()
+          showOverlay("brightness")
         }
 
         // Show panel

@@ -117,6 +117,32 @@ const EXTEND_MINIMUM_BREAKPOINT_DEFAULT = 20
 const EXTEND_MINIMUM_BREAKPOINT_MIN = 5
 const EXTEND_MINIMUM_BREAKPOINT_MAX = 90
 
+// Virtual-key labels for the scroll modifier capture input.
+const MODIFIER_KEY_NAMES = {
+    0x01: "MOUSE_L", 0x02: "MOUSE_R", 0x04: "MOUSE_M", 0x05: "MOUSE_X1", 0x06: "MOUSE_X2",
+    0x08: "Backspace", 0x09: "Tab", 0x0D: "Enter", 0x10: "Shift", 0x11: "Ctrl", 0x12: "Alt",
+    0x13: "Pause", 0x14: "CapsLock", 0x1B: "Esc", 0x20: "Space",
+    0x21: "PageUp", 0x22: "PageDown", 0x23: "End", 0x24: "Home",
+    0x25: "Left", 0x26: "Up", 0x27: "Right", 0x28: "Down",
+    0x2C: "PrintScreen", 0x2D: "Insert", 0x2E: "Delete",
+    0x5B: "Win", 0x5C: "Win", 0x5D: "Menu"
+}
+
+// Mouse buttons, indexed by MouseEvent.button
+const MOUSE_BUTTON_VK = [0x01, 0x04, 0x02, 0x05, 0x06]
+
+function modifierKeyLabel(vk, T) {
+    if (vk === null || vk === undefined) return T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_NONE")
+    const name = MODIFIER_KEY_NAMES[vk]
+    if (name) {
+        return name.startsWith("MOUSE_") ? T.t("GENERIC_MOUSE_" + name.slice(6)) : name
+    }
+    if (vk >= 0x30 && vk <= 0x5A) return String.fromCharCode(vk)
+    if (vk >= 0x70 && vk <= 0x87) return "F" + (vk - 0x6F)
+    if (vk >= 0x60 && vk <= 0x69) return "Num" + (vk - 0x60)
+    return "VK " + vk
+}
+
 export default class SettingsWindow extends PureComponent {
 
     constructor(props) {
@@ -135,14 +161,14 @@ export default class SettingsWindow extends PureComponent {
             adjustmentTimes: [],
             linkedLevelsActive: false,
             updateInterval: (window.settings.updateInterval || 500),
-            downloadingUpdate: false,
-            checkForUpdates: false,
+            scrollDefaultAction: "volume",
+            scrollModifierAction: "brightness",
+            scrollModifierKey: 17,
+            recordingModifier: false,
             adjustmentTimeIndividualDisplays: false,
             languages: [],
-            analytics: false,
             useAcrylic: true,
             scrollShortcut: true,
-            updateProgress: 0,
             extendedDDCCI: {
                 contrast: 50,
                 volume: 50,
@@ -187,29 +213,8 @@ export default class SettingsWindow extends PureComponent {
         window.addEventListener("localizationUpdated", (e) => { this.setState({ languages: e.detail.languages });  T.setLocalizationData(e.detail.desired, e.detail.default)}); 
         window.addEventListener("windowHistory", e => this.setState({ windowHistory: e.detail }))
 
-        if (window.isAppX === false) {
-            window.addEventListener("updateUpdated", (e) => {
-                const version = e.detail
-                this.setState({
-                    releaseURL: (window.isAppX ? "ms-windows-store://pdp/?productid=9PLJWWSV01LK" : version.releaseURL),
-                    latest: version.version,
-                    downloadURL: version.downloadURL,
-                    changelog: version.changelog,
-                    error: (version.error != undefined ? version.error : false)
-                })
-                if (e.detail.error == true) {
-                    this.setState({
-                        downloadingUpdate: false
-                    })
-                }
-            })
-            window.addEventListener("updateProgress", (e) => {
-                this.setState({
-                    updateProgress: e.detail.progress
-                })
-            })
-            window.checkForUpdates()
-        }
+        window.addEventListener("keydown", this.captureModifierKey, true)
+        window.addEventListener("mousedown", this.captureModifierKey, true)
         window.ipc.send('get-window-history')
         window.ipc.send("sendSettingsWindowPos")
         window.ipc.send('request-localization')
@@ -219,6 +224,8 @@ export default class SettingsWindow extends PureComponent {
 
     componentWillUnmount() {
         window.removeEventListener("nativeBrightnessKey", this.recievedNativeBrightnessKey)
+        window.removeEventListener("keydown", this.captureModifierKey, true)
+        window.removeEventListener("mousedown", this.captureModifierKey, true)
         window.ipc.send("set-native-hotkey-recording", false)
     }
 
@@ -391,11 +398,6 @@ export default class SettingsWindow extends PureComponent {
                 icon: "&#xE957;"
             },
             {
-                id: "updates",
-                label: T.t("SETTINGS_SIDEBAR_UPDATES"),
-                icon: "&#xE895;"
-            },
-            {
                 id: "debug",
                 label: "Debug",
                 icon: "&#xEBE8;",
@@ -424,43 +426,6 @@ export default class SettingsWindow extends PureComponent {
         } catch(e) { }
     }
 
-
-    getUpdate = () => {
-        if (window.isAppX) {
-            return (
-                <p><a onClick={() => { window.openURL("ms-store") }}>{T.t("SETTINGS_UPDATES_MS_STORE")}</a></p>
-            )
-        } else {
-            if (this.state.latest && this.state.latest != window.version) {
-                return (
-                    <div>
-                        <p><b style={{ color: window.accent }}>{T.t("SETTINGS_UPDATES_AVAILABLE") + ` (${this.state.latest})`}</b></p>
-                        <div className="changelog">
-                            <h3>{this.state.latest}</h3>
-                            <Markdown options={{ forceBlock: true }}>{this.state.changelog}</Markdown>
-                        </div>
-                        <br />
-                        {this.getUpdateButton()}
-                    </div>
-                )
-            } else if (this.state.latest) {
-                return (
-                    <div>
-                        <p>{T.t("SETTINGS_UPDATES_NONE_AVAILABLE")}</p>
-                        <div className="changelog"><Markdown options={{ forceBlock: true }}>{this.state.changelog}</Markdown></div>
-                    </div>
-                )
-            }
-        }
-    }
-
-    getUpdateButton = () => {
-        if (this.state.downloadingUpdate) {
-            return (<div><p><b>{T.t("SETTINGS_UPDATES_DOWNLOADING")}</b></p><div className="progress-bar"><div style={{ width: `${this.state.updateProgress}%` }}></div></div></div>)
-        } else {
-            return (<a className="button" onClick={() => { window.getUpdate(); this.setState({ downloadingUpdate: true }) }}><span className="icon red vfix" style={{ paddingRight: "6px", display: (this.state.error ? "inline" : "none") }}>&#xE783;</span>{T.t("SETTINGS_UPDATES_DOWNLOAD", this.state.latest)}</a>)
-        }
-    }
 
     getMinMaxMonitors = () => {
         if (this.state.monitors == undefined || Object.keys(this.state.monitors).length == 0) {
@@ -1232,6 +1197,52 @@ export default class SettingsWindow extends PureComponent {
         })
     }
 
+    // ── Scroll modifier capture ──
+    startModifierCapture = (e) => {
+        e.preventDefault()
+        this.setState({ recordingModifier: true })
+    }
+
+    captureModifierKey = (e) => {
+        if (!this.state.recordingModifier) return
+
+        // Clicking the capture box again cancels instead of recording a left click.
+        if (e.type === "mousedown" && e.target?.dataset?.modifierInput === "true") {
+            this.setState({ recordingModifier: false })
+            e.preventDefault()
+            return
+        }
+
+        let vk = null
+        if (e.type === "mousedown") {
+            vk = MOUSE_BUTTON_VK[e.button]
+            e.preventDefault()
+        } else {
+            if (e.key === "Escape") {
+                this.setState({ recordingModifier: false })
+                return
+            }
+            vk = e.keyCode
+            e.preventDefault()
+        }
+
+        if (!vk) return
+        e.stopPropagation()
+        this.setState({ recordingModifier: false, scrollModifierKey: vk })
+        window.sendSettings({ scrollModifierKey: vk })
+    }
+
+    clearModifierCapture = () => {
+        this.setState({ scrollModifierKey: null, recordingModifier: false })
+        window.sendSettings({ scrollModifierKey: null })
+    }
+
+    resetScrollActions = () => {
+        const defaults = { scrollDefaultAction: "volume", scrollModifierAction: "brightness", scrollModifierKey: 17 }
+        this.setState(defaults)
+        window.sendSettings(defaults)
+    }
+
     // Update settings
     recievedSettings = (e) => {
         const settings = e.detail
@@ -1245,12 +1256,13 @@ export default class SettingsWindow extends PureComponent {
         const killWhenIdle = (settings.killWhenIdle || false)
         const order = (settings.order || [])
         const checkTimeAtStartup = (settings.checkTimeAtStartup || false)
-        const checkForUpdates = (settings.checkForUpdates || false)
         const adjustmentTimeIndividualDisplays = (settings.adjustmentTimeIndividualDisplays || false)
         const language = (settings.language || "system")
         const hotkeys = (settings.hotkeys || [])
         const hotkeyPercent = (settings.hotkeyPercent || 10)
-        const analytics = settings.analytics
+        const scrollDefaultAction = (settings.scrollDefaultAction || "volume")
+        const scrollModifierAction = (settings.scrollModifierAction || "brightness")
+        const scrollModifierKey = (settings.scrollModifierKey === undefined ? 17 : settings.scrollModifierKey)
         const useAcrylic = settings.useAcrylic
         const scrollShortcut = settings.scrollShortcut
         this.setState({
@@ -1265,12 +1277,13 @@ export default class SettingsWindow extends PureComponent {
             killWhenIdle,
             order,
             checkTimeAtStartup,
-            checkForUpdates,
+            scrollDefaultAction,
+            scrollModifierAction,
+            scrollModifierKey,
             adjustmentTimeIndividualDisplays,
             language,
             hotkeys,
             hotkeyPercent,
-            analytics,
             useAcrylic,
             scrollShortcut
         }, () => {
@@ -1405,8 +1418,6 @@ export default class SettingsWindow extends PureComponent {
                                             </div>
                                         </div>
                                     )} />
-
-                                    <SettingsOption title={T.t("SETTINGS_GENERAL_ANALYTICS_TITLE")} description={T.h("SETTINGS_GENERAL_ANALYTICS_DESC", '<a href="javascript:window.openURL(\'privacy-policy\')">' + T.t("SETTINGS_GENERAL_ANALYTICS_LINK") + '</a>')} input={this.renderToggle("analytics")} />
 
                                 </div>
 
@@ -1648,6 +1659,48 @@ export default class SettingsWindow extends PureComponent {
                                             }} />
                                         } />
                                         <SettingsChild title={T.t("SETTINGS_HOTKEYS_INVERT_SCROLL_TITLE")} description={T.t("SETTINGS_HOTKEYS_INVERT_SCROLL_DESC")} input={this.renderToggle("invertScroll")} />
+
+                                        <SettingsChild title={T.t("SETTINGS_HOTKEYS_SCROLL_DEFAULT_ACTION")} input={
+                                            <select value={this.state.rawSettings.scrollDefaultAction || "volume"} onChange={e => {
+                                                const value = e.target.value
+                                                this.state.rawSettings.scrollDefaultAction = value
+                                                this.setState({ scrollDefaultAction: value })
+                                                window.sendSettings({ scrollDefaultAction: value })
+                                            }}>
+                                                <option value="volume">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_VOLUME")}</option>
+                                                <option value="brightness">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_BRIGHTNESS")}</option>
+                                                <option value="none">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_NONE")}</option>
+                                            </select>
+                                        } />
+
+                                        <SettingsChild title={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_TITLE")} description={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_DESC")} className="win10-stack-input" input={
+                                            <div className="row">
+                                                <input
+                                                    type="text"
+                                                    readOnly={true}
+                                                    data-modifier-input="true"
+                                                    style={{ cursor: "pointer" }}
+                                                    value={this.state.recordingModifier ? T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_LISTENING") : modifierKeyLabel(this.state.scrollModifierKey, T)}
+                                                    onMouseDown={this.startModifierCapture}
+                                                    onKeyDown={this.startModifierCapture}
+                                                />
+                                                <input type="button" value={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_CLEAR")} onClick={this.clearModifierCapture} />
+                                                <input type="button" value={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_RESET")} onClick={this.resetScrollActions} />
+                                            </div>
+                                        } />
+
+                                        <SettingsChild title={T.t("SETTINGS_HOTKEYS_SCROLL_MODIFIER_ACTION")} input={
+                                            <select value={this.state.rawSettings.scrollModifierAction || "brightness"} onChange={e => {
+                                                const value = e.target.value
+                                                this.state.rawSettings.scrollModifierAction = value
+                                                this.setState({ scrollModifierAction: value })
+                                                window.sendSettings({ scrollModifierAction: value })
+                                            }}>
+                                                <option value="volume">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_VOLUME")}</option>
+                                                <option value="brightness">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_BRIGHTNESS")}</option>
+                                                <option value="none">{T.t("SETTINGS_HOTKEYS_SCROLL_ACTION_NONE")}</option>
+                                            </select>
+                                        } />
                                     </SettingsOption>
                                 </div>
 
@@ -1697,23 +1750,6 @@ export default class SettingsWindow extends PureComponent {
 
                             <SettingsPage current={this.state.activePage} id="light-sensor">
                                 <LightSensorSettings T={T} renderToggle={this.renderToggle.bind(this)} monitors={this.state.monitors}></LightSensorSettings>
-                            </SettingsPage>
-
-                            <SettingsPage current={this.state.activePage} id="updates">
-                                <div className="pageSection">
-                                    <div className="sectionTitle">{T.t("SETTINGS_UPDATES_TITLE")}</div>
-                                    <p>{T.h("SETTINGS_UPDATES_VERSION", '<b>' + (window.version ? `${window.version}${window.versionTag && window.versionBuild ? ` (${window.versionBuild})` : ""}` : "not available") + '</b>')}</p>
-                                    {this.getUpdate()}
-                                </div>
-                                <div className="pageSection" style={{ display: (window.isAppX ? "none" : (this.isSection("updates") ? "block" : "none")) }}>
-                                    <SettingsOption title={T.t("SETTINGS_UPDATES_AUTOMATIC_TITLE")} description={T.t("SETTINGS_UPDATES_AUTOMATIC_DESC")} input={this.renderToggle("checkForUpdates")} />
-                                    <SettingsOption title={T.t("SETTINGS_UPDATES_CHANNEL")} input={
-                                        <select value={this.state.rawSettings.branch} onChange={(e) => { window.sendSettings({ branch: e.target.value }) }}>
-                                            <option value="master">{T.t("SETTINGS_UPDATES_BRANCH_STABLE")}</option>
-                                            <option value="beta">{T.t("SETTINGS_UPDATES_BRANCH_BETA")}</option>
-                                        </select>
-                                    } />
-                                </div>
                             </SettingsPage>
 
                             <SettingsPage current={this.state.activePage} id="debug">

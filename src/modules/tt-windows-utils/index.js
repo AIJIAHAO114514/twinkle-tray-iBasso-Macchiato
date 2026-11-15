@@ -6,6 +6,8 @@ const MediaStatus = require("bindings")("windows_media_status");
 const AppStartup = require("bindings")("windows_app_startup");
 const WindowMaterial = require("bindings")("windows_window_material");
 const DisplayBrightness = require("bindings")("windows_display_brightness");
+const AudioDevice = require("bindings")("windows_audio_device");
+const KeyState = require("bindings")("windows_key_state");
 
 module.exports = {
     BrightnessKeys: {
@@ -38,6 +40,17 @@ module.exports = {
     DisplayBrightness: {
         getBrightness: DisplayBrightness.getBrightness,
         setBrightness: DisplayBrightness.setBrightness
+    },
+    AudioDevice: {
+        // { endpointName, deviceName, displayName, id } or null
+        getDefaultRenderDevice: AudioDevice.getDefaultRenderDevice,
+        // Fires whenever the default playback endpoint changes; returns false
+        // when COM refuses to register, so callers can fall back to polling.
+        startDefaultDeviceWatch: AudioDevice.startDefaultDeviceWatch,
+        stopDefaultDeviceWatch: AudioDevice.stopDefaultDeviceWatch
+    },
+    KeyState: {
+        isKeyPressed: KeyState.isKeyPressed
     },
     WindowMaterial: {
         setWindowMaterial: (hwnd, materialType = 1, cornersType = 2, darkModeSupported = true) => {

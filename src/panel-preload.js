@@ -176,15 +176,6 @@ function turnOffDisplays() {
     }, 111)
 }
 
-function installUpdate() {
-    ipc.send('get-update', window.latestVersion)
-    ipc.send('clear-update', window.latestVersion.version)
-}
-
-function dismissUpdate() {
-    ipc.send('ignore-update', window.latestVersion.version)
-}
-
 // Tray icon clicked
 ipc.on('tray-clicked', () => {
     window.document.getElementById("root").dataset["sleep"] = false
@@ -278,20 +269,19 @@ ipc.on('localization-updated', (event, localization) => {
     }))
 })
 
-// New app update recieved
-ipc.on('latest-version', (event, version) => {
-    window.latestVersion = version
-    window.dispatchEvent(new CustomEvent('updateUpdated', {
-        detail: version
+// Overlay payload: which OSD to draw, plus the DAC state when it is a volume OSD
+ipc.on('overlay-state', (event, payload) => {
+    window.overlayState = payload
+    window.dispatchEvent(new CustomEvent('overlayStateChanged', {
+        detail: payload
     }))
 })
 
-// Update download progress
-ipc.on('updateProgress', (event, progress) => {
-    window.dispatchEvent(new CustomEvent('updateProgress', {
-        detail: {
-            progress
-        }
+// Macchiato DAC state (volume / mute / connection)
+ipc.on('macchiato-state', (event, state) => {
+    window.macchiatoState = state
+    window.dispatchEvent(new CustomEvent('macchiatoStateChanged', {
+        detail: state
     }))
 })
 
@@ -435,8 +425,6 @@ window.openSettings = openSettings
 window.sendSettings = sendSettings
 window.requestSettings = requestSettings
 window.pauseMonitorUpdates = pauseMonitorUpdates
-window.installUpdate = installUpdate
-window.dismissUpdate = dismissUpdate
 window.sendHeight = sendHeight
 window.panelAnimationDone = panelAnimationDone
 window.setPanelVisibility = setPanelVisibility

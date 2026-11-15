@@ -18,6 +18,7 @@
     --tray-background-blur-start: rgba(219, 219, 219, 1);
     --tray-text: black;
     --tray-border: #aaaaaa;
+    --muted-color: #c42b1c;
 
     --page-background: #ffffff;
     --page-text: #000;
@@ -49,6 +50,7 @@
         --tray-background-blur-start: rgba(41, 41, 41, 1);
         --tray-text: white;
         --tray-border: #434343;
+        --muted-color: #ff8282;
 
         --page-background: #030303;
         --page-text: #fff;
@@ -135,6 +137,7 @@ body[data-colored-taskbar="true"] {
         --tray-background-blur-start: rgba(41, 41, 41, 1);
         --tray-text: white;
         --tray-border: #434343;
+        --muted-color: #ff8282;
     
         --page-background: #030303;
         --page-text: #fff;

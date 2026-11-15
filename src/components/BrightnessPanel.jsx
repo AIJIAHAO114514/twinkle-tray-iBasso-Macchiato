@@ -1,9 +1,11 @@
-import React, { memo, useEffect, useMemo, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import Slider from "./Slider";
 import DDCCISliders from "./DDCCISliders"
 import HDRSliders from "./HDRSliders";
 import TranslateReact from "../TranslateReact"
 import getMonitorName from "../utils/BrightnessPanel/getMonitorName";
+import MacchiatoSlider from "./MacchiatoSlider";
+import useMacchiato from "../hooks/useMacchiato";
 import { usesGammaSlider, isAdjustableDisplay } from "./utilts/monitor.util";
 
 const BrightnessPanel = memo(function BrightnessPanel() {
@@ -15,17 +17,21 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     hideDisplays: window.settings?.hideDisplays || {},
     linkedLevelsActive: false,
     names: {},
-    update: false,
     sleeping: false,
-    updateProgress: 0,
     isRefreshing: window.isRefreshing
   })
   const [doBackgroundEvent, setDoBackgroundEvent] = useState(false)
   const [levelsChanged, setLevelsChanged] = useState(false)
   const [init, setInit] = useState(false)
-  const [lastLevels, setLastLevels] = useState([])
+  // Last level written per monitor id. This used to be a state array that was
+  // never populated, so `brightness != undefined` was always true and every sync
+  // wrote to every display, including the ones the user had not touched.
+  const lastLevelsRef = useRef({})
   const [T] = useState(new TranslateReact({}, {}))
   const [, setLocalizationVersion] = useState(0)
+  // Which OSD the main process asked for. DAC values come from useMacchiato.
+  const [overlayState, setOverlayState] = useState(window.overlayState || { kind: null })
+  const dac = useMacchiato()
 
   const numMonitors = useMemo(() => {
     let localNumMonitors = 0
@@ -35,8 +41,12 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     return localNumMonitors
   }, [state.monitors, state.hideDisplays])
 
-  let updateInterval = null
-  let panelHeight = -1
+  // These were plain locals in the render body, which meant every render reset
+  // them: the settings handler created a new interval whose handle was stored in
+  // a throwaway binding (so the effect cleanup could never clear it), and the
+  // height guard always compared against -1.
+  const updateIntervalRef = useRef(null)
+  const panelHeightRef = useRef(-1)
 
   // Enable/Disable linked levels
   const toggleLinkedLevels = () => {
@@ -49,33 +59,31 @@ const BrightnessPanel = memo(function BrightnessPanel() {
 
   // Handle <Slider> changes
   const handleChange = (level, slider) => {
+    // Copy the monitors that actually change instead of mutating the objects
+    // React already holds.
     const monitors = { ...state.monitors }
-    const sliderMonitor = monitors[slider.props.hwid]
     if (numMonitors && state.linkedLevelsActive) {
-      // Update all monitors (linked)
       for (let key in monitors) {
-        const monitor = monitors[key]
-        monitor.brightness = level
+        monitors[key] = { ...monitors[key], brightness: level }
       }
-      setState(prev => ({ ...prev, monitors }))
-      setLevelsChanged(true)
-      if (state.updateInterval === 999) syncBrightness()
     } else if (numMonitors > 0) {
-      // Update single monitor
-      if (sliderMonitor) sliderMonitor.brightness = level;
-      setState(prev => ({ ...prev, monitors }))
-      setLevelsChanged(true)
-      if (state.updateInterval === 999) syncBrightness()
+      const hwid = slider.props.hwid
+      if (monitors[hwid]) monitors[hwid] = { ...monitors[hwid], brightness: level }
     }
+    setState(prev => ({ ...prev, monitors }))
+    setLevelsChanged(true)
+    if (state.updateInterval === 999) syncBrightness()
     window.pauseMonitorUpdates()
   }
 
   // Update monitor info
   const recievedMonitors = (e) => {
     let newMonitors = { ...e.detail }
-    setLastLevels([])
+    // A refresh can report levels that differ from what we last wrote, so drop
+    // the cache and let the next sync re-apply everything once.
+    lastLevelsRef.current = {}
     // Reset panel height so it's recalculated
-    panelHeight = -1
+    panelHeightRef.current = -1
     setState(prev => ({
       ...prev,
       monitors: newMonitors
@@ -132,11 +140,6 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     setDoBackgroundEvent(true)
   }
 
-  const recievedUpdate = (e) => {
-    const update = e.detail
-    setState(prev => ({ ...prev, update }))
-  }
-
   const recievedSleep = (e) => {
     setState(prev => ({ ...prev, sleeping: e.detail }))
   }
@@ -151,9 +154,11 @@ const BrightnessPanel = memo(function BrightnessPanel() {
       setLevelsChanged(false)
       try {
         for (let idx in monitors) {
-          if (isAdjustableDisplay(monitors[idx]) && monitors[idx].brightness != lastLevels[idx]) {
-            window.updateBrightness(monitors[idx].id, monitors[idx].brightness)
-          }
+          const monitor = monitors[idx]
+          if (!isAdjustableDisplay(monitor)) continue
+          if (lastLevelsRef.current[monitor.id] === monitor.brightness) continue
+          lastLevelsRef.current[monitor.id] = monitor.brightness
+          window.updateBrightness(monitor.id, monitor.brightness)
         }
       } catch (e) {
         console.error("Could not update brightness")
@@ -162,17 +167,18 @@ const BrightnessPanel = memo(function BrightnessPanel() {
   }
 
   const resetBrightnessInterval = () => {
-    if (updateInterval) clearInterval(updateInterval)
-    updateInterval = setInterval(() => syncBrightness(), (state.updateInterval || 500))
+    if (updateIntervalRef.current) clearInterval(updateIntervalRef.current)
+    updateIntervalRef.current = setInterval(() => syncBrightness(), (state.updateInterval || 500))
   }
 
   const handleIsRefreshingUpdate = (e) => setState(prev => ({ ...prev, isRefreshing: e.detail }))
-  const handleUpdateProgress = (e) => setState(prev => ({ ...prev, updateProgress: e.detail.progress }))
+  const handleOverlayState = (e) => setOverlayState(e.detail || { kind: null })
 
   useEffect(() => {
     resetBrightnessInterval()
     return () => {
-      clearInterval(updateInterval)
+      if (updateIntervalRef.current) clearInterval(updateIntervalRef.current)
+      updateIntervalRef.current = null
     }
   }, [state.monitors, numMonitors, doBackgroundEvent, levelsChanged, init])
 
@@ -184,21 +190,16 @@ const BrightnessPanel = memo(function BrightnessPanel() {
       T.setLocalizationData(e.detail.desired, e.detail.default)
       setLocalizationVersion(version => version + 1)
     }
-    const handleUpdateUpdated = (e) => recievedUpdate(e)
     const handleSleepUpdated = (e) => recievedSleep(e)
     const handleRefreshingUpdated = (e) => handleIsRefreshingUpdate(e)
-    const handleProgressUpdated = (e) => handleUpdateProgress(e)
+    const handleOverlayUpdated = (e) => handleOverlayState(e)
 
     window.addEventListener("monitorsUpdated", handleMonitorsUpdated)
     window.addEventListener("settingsUpdated", handleSettingsUpdated)
     window.addEventListener("localizationUpdated", handleLocalizationUpdated)
-    window.addEventListener("updateUpdated", handleUpdateUpdated)
     window.addEventListener("sleepUpdated", handleSleepUpdated)
     window.addEventListener("isRefreshing", handleRefreshingUpdated)
-
-    if (window.isAppX === false) {
-      window.addEventListener("updateProgress", handleProgressUpdated)
-    }
+    window.addEventListener("overlayStateChanged", handleOverlayUpdated)
 
     // Update brightness every interval, if changed
     window.requestSettings()
@@ -210,19 +211,17 @@ const BrightnessPanel = memo(function BrightnessPanel() {
       window.removeEventListener("monitorsUpdated", handleMonitorsUpdated)
       window.removeEventListener("settingsUpdated", handleSettingsUpdated)
       window.removeEventListener("localizationUpdated", handleLocalizationUpdated)
-      window.removeEventListener("updateUpdated", handleUpdateUpdated)
       window.removeEventListener("sleepUpdated", handleSleepUpdated)
       window.removeEventListener("isRefreshing", handleRefreshingUpdated)
-      window.removeEventListener("updateProgress", handleProgressUpdated)
+      window.removeEventListener("overlayStateChanged", handleOverlayUpdated)
     }
   }, [])
 
   useEffect(() => {
     const height = window.document.getElementById("panel").offsetHeight
-    if (panelHeight != height) {
-      panelHeight = height
-      window.sendHeight(height)
-    }
+    if (panelHeightRef.current === height) return
+    panelHeightRef.current = height
+    window.sendHeight(height)
   })
 
   const getMonitors = () => {
@@ -370,6 +369,23 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     }
   }
 
+  // Volume OSD. The DAC row is its own component but shares RangeInput with the
+  // display sliders, so it inherits both the Win11 row and the Win10 bar layout.
+  const getMacchiatoSlider = () => (
+    <MacchiatoSlider
+      label={T.t("TRAY_MACCHIATO_NAME")}
+      volume={dac.volume}
+      muted={dac.muted}
+      onVolumeChange={(value) => window.ipc.send("macchiato-set-volume", value)}
+      onToggleMute={() => window.ipc.send("macchiato-toggle-mute")}
+      scrollAmount={window.settings?.scrollFlyoutAmount}
+    />
+  )
+
+  const getVolumeOsd = () => (
+    <div className="monitor-sliders" key="macchiato-osd">{getMacchiatoSlider()}</div>
+  )
+
   return (
     <div className="window-base" data-theme={window.settings.theme || "default"} id="panel" data-refreshing={state.isRefreshing}>
       <div className="titlebar">
@@ -397,39 +413,13 @@ const BrightnessPanel = memo(function BrightnessPanel() {
           <div title={T.t("GENERIC_SETTINGS")} className="settings" onClick={window.openSettings}>&#xE713;</div>
         </div>
       </div>
-      {state.sleeping ? (<div></div>) : getMonitors()}
-      {
-        (state.update && state.update.show)
-          ?
-          <div className="updateBar">
-            <div className="left">
-              {T.t("PANEL_UPDATE_AVAILABLE")}
-              ({state.update.version})
-            </div>
-            <div className="right">
-              <a onClick={window.installUpdate}>
-                {T.t("GENERIC_INSTALL")}
-              </a>
-              <a className="icon" title={T.t("GENERIC_DISMISS")} onClick={window.dismissUpdate}>
-                &#xEF2C;
-              </a>
-            </div>
-          </div>
-          :
-          (state.update && state.update.downloading)
-          &&
-          <div className="updateBar">
-            <div className="left progress">
-              <div className="progress-bar">
-                <div style={{ width: `${state.updateProgress}%` }}>
-                </div>
-              </div>
-            </div>
-            <div className="right">
-              {state.updateProgress}%
-            </div>
-          </div>
-      }
+      {state.sleeping ? (<div></div>) : (overlayState.kind === "volume" ? getVolumeOsd() : getMonitors())}
+      {state.sleeping || overlayState.kind !== null || !dac.connected ? null : (
+        <div className="macchiato-section">
+          <hr className="macchiato-separator" />
+          <div className="monitor-sliders" key="macchiato-panel">{getMacchiatoSlider()}</div>
+        </div>
+      )}
       <div id="mica">
         <div className="displays" style={{ visibility: window.micaState.visibility }}>
           <div className="blur">

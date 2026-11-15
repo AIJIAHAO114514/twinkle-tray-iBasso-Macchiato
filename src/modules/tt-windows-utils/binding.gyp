@@ -96,6 +96,34 @@
         'VCCLCompilerTool': { "ExceptionHandling": 1 }
       },
       'defines': [ 'NAPI_CPP_EXCEPTIONS' ],
+    },
+    {
+      "target_name": "windows_audio_device",
+      "cflags!": [ ],
+      "cflags_cc!": [ ],
+      "sources": [ "windows_audio_device.cc" ],
+      "include_dirs": [
+        "<!@(node -p \"require('node-addon-api').include\")"
+      ],
+      "libraries": [ "ole32.lib", "propsys.lib", "uuid.lib" ],
+      'msvs_settings': {
+        'VCCLCompilerTool': { "ExceptionHandling": 1 }
+      },
+      'defines': [ 'NAPI_CPP_EXCEPTIONS' ],
+    },
+    {
+      "target_name": "windows_key_state",
+      "cflags!": [ ],
+      "cflags_cc!": [ ],
+      "sources": [ "windows_key_state.cc" ],
+      "include_dirs": [
+        "<!@(node -p \"require('node-addon-api').include\")"
+      ],
+      "libraries": [ "user32.lib" ],
+      'msvs_settings': {
+        'VCCLCompilerTool': { "ExceptionHandling": 1 }
+      },
+      'defines': [ 'NAPI_CPP_EXCEPTIONS' ],
     }
   ]
 }

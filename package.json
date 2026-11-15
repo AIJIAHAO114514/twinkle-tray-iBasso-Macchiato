@@ -19,7 +19,8 @@
     "appx-arm64": "npm run parcel-build && electron-builder --arm64 -w appx -c.extraMetadata.name=twinkle-tray-appx -c.win.artifactName=\"${productName} v${version}-store-arm64.${ext}\"",
     "build": "npm ci & npm run parcel-build && npm run electron-build",
     "build-all": "npm run build && npm run appx && npm run appx-arm64",
-    "test-wmibridge": "node src/modules/wmi-bridge/example.js"
+    "test-wmibridge": "node src/modules/wmi-bridge/example.js",
+    "test": "node --test test/macchiato-device.test.js"
   },
   "keywords": [
     "electron",
@@ -35,7 +36,6 @@
     "@paymoapp/active-window": "file:src/modules/node-active-window",
     "acrylic": "file:src/modules/acrylic",
     "color": "^4.2.3",
-    "ga4-mp": "^1.0.3",
     "global-mouse-events": "^1.2.0",
     "markdown-to-jsx": "^7.5.0",
     "stackblur-canvas": "^2.7.0",
@@ -51,13 +51,16 @@
     "yoctolib-es2017": "^1.11.6320"
   },
   "optionalDependencies": {
-    "native-reg": "^1.1.1"
+    "native-reg": "^1.1.1",
+    "node-hid": "^3.3.0"
   },
   "build": {
     "productName": "Twinkle Tray",
     "appId": "com.xanderfrangos.twinkle-tray",
     "compression": "normal",
-    "electronLanguages": ["en-US"],
+    "electronLanguages": [
+      "en-US"
+    ],
     "afterPack": "resources/afterPack.js",
     "directories": {
       "buildResources": "resources"
@@ -74,6 +77,8 @@
       "src/Utils.js",
       "src/Logger.js",
       "src/Monitors.js",
+      "src/MacchiatoDevice.js",
+      "src/services/MacchiatoService.js",
       "src/wmi-bridge-test.js",
       "src/vcp-codes.js",
       "src/volume-utils.js",
