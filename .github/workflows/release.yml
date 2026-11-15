@@ -1,0 +1,67 @@
+name: Release
+
+# The upstream CI workflow only uploads build artifacts. This one publishes an
+# installer to GitHub Releases, so the fork can be installed without a local
+# toolchain.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp and publish, e.g. 1.18.0-macchiato.1'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish installer
+    runs-on: windows-2025
+
+    steps:
+      - uses: actions/checkout@v6
+        name: Read repository
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      # Runs the postinstall hook, which rebuilds every native module against
+      # the Electron ABI (electron-builder install-app-deps).
+      - name: Install dependencies
+        run: npm i
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stamp version from the tag
+        shell: pwsh
+        run: |
+          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.version }}' } else { '${{ github.ref_name }}' }
+          if (-not $version) { throw 'No version to release' }
+          $version = $version -replace '^v', ''
+          npm version $version --no-git-tag-version --allow-same-version
+          Write-Host "Releasing $version"
+
+      - name: Build renderer
+        run: npm run parcel-build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package installer
+        run: npm run electron-build -- --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
