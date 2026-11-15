@@ -45,6 +45,22 @@ npm start -- --twinkle-gpu
 
 或设置环境变量 `TWINKLE_TRAY_GPU=1`。
 
+## 版本与命名
+
+安装包按 **软件-上游版本-芯片型号-分支版本** 命名：
+
+```
+Twinkle-Tray-1.18.0-beta2-ibassoMacchiato-1.0.0.exe
+```
+
+`package.json` 的 `version` 走这条分支自己的版本线（当前 `1.0.0`），上游基线固定在文件名里，一眼能看出是基于哪个上游版本改的。
+
+发版流程：打 `v*` 标签并推送即可，`Release` 工作流会用标签覆盖版本号、打包 NSIS 安装器并挂到 GitHub Release。
+
+```
+git tag -a v1.0.0 -m "..." && git push origin v1.0.0
+```
+
 ## 已知限制
 
 - DAC 不在线时，滚轮自动回落到调节显示器亮度
