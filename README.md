@@ -5,6 +5,57 @@
 
 <p align="center"><a href="https://github.com/xanderfrangos/twinkle-tray/releases" target="_blank"><img src="https://img.shields.io/github/v/release/xanderfrangos/twinkle-tray" alt="Latest release" /></a> <a href="https://github.com/xanderfrangos/twinkle-tray/releases" target="_blank"><img src="https://img.shields.io/github/downloads/xanderfrangos/twinkle-tray/total" alt="Total downloads" /></a> <a href="https://hosted.weblate.org/projects/twinkle-tray/twinkle-tray/" target="_blank"><img src="https://hosted.weblate.org/widgets/twinkle-tray/-/twinkle-tray/svg-badge.svg" alt="Translations" /></a></p>
 
+> **本仓库是个人分支**，基于上游 [`v1.18.0-beta2`](https://github.com/xanderfrangos/twinkle-tray/releases) 重做，为 **iBasso Macchiato** USB DAC 增加了硬件音量控制。以下为与上游的差异说明，再往下是上游原始 README。
+
+## 这个分支做了什么
+
+| 功能 | 说明 |
+|---|---|
+| **滚轮调音量** | 在托盘图标上滚动默认调节 DAC 硬件音量；按住修饰键（默认 Ctrl）滚动则调节显示器亮度。两个槽位都可以在设置里改成任意组合，或设为「无」 |
+| **音量 OSD** | 滚动时弹出与亮度 OSD 同样式的音量浮窗，复用面板窗口，不会出现两个窗口抢焦点 |
+| **面板音量条** | 面板底部新增一条 DAC 音量滑块，静音时进度条和数值变红，点喇叭图标切换静音 |
+| **图标状态** | DAC 是 Windows 默认播放设备时，托盘图标从空心星变为实心星。由 `IMMNotificationClient` 事件驱动，切换设备即时生效 |
+| **托盘增强** | tooltip 显示 DAC 音量/静音状态；双击托盘图标静音；右键菜单直达 [Macchiato Web 控制台](https://ibasso.cn/uac/#/device/Macchiato) |
+| **移除自动更新** | 更新检查、下载器、设置页「更新」分页、使用统计上报全部删除 |
+
+## 实现要点
+
+- `src/MacchiatoDevice.js` —— 直接讲 USB HID 协议（`node-hid`，可选依赖），自带热插拔监听和静音状态机
+- `src/services/MacchiatoService.js` —— 主进程里唯一持有设备知识的地方，向上只暴露事件
+- `src/modules/tt-windows-utils` —— 新增两个原生函数：查询默认渲染端点（COM）、同步读取按键状态
+- 音量写入按 25ms 合并，快速滚轮不会把 USB 事务堆积给 DAC
+- 需要 Node.js 22+，Windows 10/11 x64
+
+## 开发
+
+```
+npm install                 # 会顺带编译原生模块
+npm start                   # 开发模式（Parcel + Electron）
+npm test                    # 纯逻辑单测，不需要 Electron
+npm run electron-build      # 打包
+```
+
+若原生模块编译失败，可先 `npm install --ignore-scripts`，再对 `src/modules/*` 逐个执行 `node-gyp rebuild --target=<electron 版本> --dist-url=https://electronjs.org/headers`。
+
+**GPU 兜底**：新版 Chromium 的 GPU 进程在部分 Windows 11 构建上无法启动（`GPU process isn't usable`）。本分支默认关闭硬件加速以规避，需要时可显式开启：
+
+```
+npm start -- --twinkle-gpu
+```
+
+或设置环境变量 `TWINKLE_TRAY_GPU=1`。
+
+## 已知限制
+
+- DAC 不在线时，滚轮自动回落到调节显示器亮度
+- 实心图标只对默认星形托盘图标生效；选 `mdl2` / `fluent` 时没有实心版本
+- 静音是软件模拟（写入 0 并记住原值），退出程序后设备保持该状态
+- 除中英外其余语言回退英文
+
+---
+
+<sub>以下为上游原始说明。</sub>
+
 Twinkle Tray enables brightness control on external displays in Windows 10 & 11. Even though Windows is capable of adjusting the backlight on most monitors, it doesn't support external monitors natively. Windows also lacks any options to manage the brightness of multiple displays. This app inserts a new icon into your system tray, where you can click to have instant access to the brightness levels of all compatible displays. 
 
 <img src="https://raw.githubusercontent.com/xanderfrangos/twinkle-tray/gh-pages/assets/img/tt-screenshot-w11.jpg" alt="Win 10 brightness slider" />
