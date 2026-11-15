@@ -60,6 +60,7 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          name: Twinkle Tray 1.18.0-beta2 · iBasso Macchiato · ${{ inputs.version || github.ref_name }}
           files: dist/*.exe
           generate_release_notes: true
           fail_on_unmatched_files: true
