@@ -4652,6 +4652,10 @@ function initMacchiato() {
     }
   })
 
+  macchiato.on('audio-output', state => {
+    sendToAllWindows('macchiato-audio-output', state)
+  })
+
   macchiato.addIpc(ipcMain)
   macchiato.init()
 }

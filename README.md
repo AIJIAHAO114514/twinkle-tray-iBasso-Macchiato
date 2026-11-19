@@ -14,6 +14,7 @@
 | **滚轮调音量** | 在托盘图标上滚动默认调节 DAC 硬件音量；按住修饰键（默认 Ctrl）滚动则调节显示器亮度。两个槽位都可以在设置里改成任意组合，或设为「无」 |
 | **音量 OSD** | 滚动时弹出与亮度 OSD 同样式的音量浮窗，复用面板窗口，不会出现两个窗口抢焦点 |
 | **面板音量条** | 面板底部新增一条 DAC 音量滑块，静音时进度条和数值变红，点喇叭图标切换静音 |
+| **切换音频输出** | 音量条上方提供「切换到 Macchiato」按钮，直接把 Windows 默认播放设备切到 DAC；已是默认输出时显示当前状态 |
 | **图标状态** | DAC 是 Windows 默认播放设备时，托盘图标从空心星变为实心星。由 `IMMNotificationClient` 事件驱动，切换设备即时生效 |
 | **托盘增强** | tooltip 显示 DAC 音量/静音状态；双击托盘图标静音；右键菜单直达 [Macchiato Web 控制台](https://ibasso.cn/uac/#/device/Macchiato) |
 | **移除自动更新** | 更新检查、下载器、设置页「更新」分页、使用统计上报全部删除 |
@@ -22,7 +23,7 @@
 
 - `src/MacchiatoDevice.js` —— 直接讲 USB HID 协议（`node-hid`，可选依赖），自带热插拔监听和静音状态机
 - `src/services/MacchiatoService.js` —— 主进程里唯一持有设备知识的地方，向上只暴露事件
-- `src/modules/tt-windows-utils` —— 新增两个原生函数：查询默认渲染端点（COM）、同步读取按键状态
+- `src/modules/tt-windows-utils` —— 新增原生能力：查询/切换默认渲染端点（COM）、同步读取按键状态
 - 音量写入按 25ms 合并，快速滚轮不会把 USB 事务堆积给 DAC
 - 需要 Node.js 22+，Windows 10/11 x64
 

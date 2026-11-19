@@ -285,6 +285,14 @@ ipc.on('macchiato-state', (event, state) => {
     }))
 })
 
+// DAC playback endpoint (available / current default output)
+ipc.on('macchiato-audio-output', (event, state) => {
+    window.macchiatoAudioOutput = state
+    window.dispatchEvent(new CustomEvent('macchiatoAudioOutputChanged', {
+        detail: state
+    }))
+})
+
 // Updated window position variable
 ipc.on('panel-position', (event, pos) => {
     window.winPosition = pos

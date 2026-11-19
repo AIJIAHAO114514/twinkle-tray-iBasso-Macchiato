@@ -5,6 +5,7 @@ import HDRSliders from "./HDRSliders";
 import TranslateReact from "../TranslateReact"
 import getMonitorName from "../utils/BrightnessPanel/getMonitorName";
 import MacchiatoSlider from "./MacchiatoSlider";
+import MacchiatoOutputControl from "./MacchiatoOutputControl";
 import useMacchiato from "../hooks/useMacchiato";
 import { usesGammaSlider, isAdjustableDisplay } from "./utilts/monitor.util";
 
@@ -414,10 +415,24 @@ const BrightnessPanel = memo(function BrightnessPanel() {
         </div>
       </div>
       {state.sleeping ? (<div></div>) : (overlayState.kind === "volume" ? getVolumeOsd() : getMonitors())}
-      {state.sleeping || overlayState.kind !== null || !dac.connected ? null : (
+      {state.sleeping || overlayState.kind !== null || (!dac.connected && !dac.audioOutput.available) ? null : (
         <div className="macchiato-section">
           <hr className="macchiato-separator" />
-          <div className="monitor-sliders" key="macchiato-panel">{getMacchiatoSlider()}</div>
+          <MacchiatoOutputControl
+            output={dac.audioOutput}
+            labels={{
+              title: T.t("PANEL_MACCHIATO_AUDIO_OUTPUT"),
+              set: T.t("PANEL_MACCHIATO_SET_DEFAULT"),
+              current: T.t("PANEL_MACCHIATO_DEFAULT_OUTPUT"),
+              unavailable: T.t("PANEL_MACCHIATO_NO_OUTPUT"),
+              switching: T.t("PANEL_MACCHIATO_SWITCHING"),
+              failed: T.t("PANEL_MACCHIATO_SWITCH_FAILED")
+            }}
+            onSelect={() => window.ipc.invoke("macchiato-set-default-output")}
+          />
+          {dac.connected ? (
+            <div className="monitor-sliders" key="macchiato-panel">{getMacchiatoSlider()}</div>
+          ) : null}
         </div>
       )}
       <div id="mica">

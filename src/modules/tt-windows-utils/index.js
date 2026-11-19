@@ -44,6 +44,10 @@ module.exports = {
     AudioDevice: {
         // { endpointName, deviceName, displayName, id } or null
         getDefaultRenderDevice: AudioDevice.getDefaultRenderDevice,
+        // Every active playback endpoint, with isDefault on the eConsole one.
+        getRenderDevices: AudioDevice.getRenderDevices,
+        // Switches the default playback endpoint; no elevation required.
+        setDefaultRenderDevice: AudioDevice.setDefaultRenderDevice,
         // Fires whenever the default playback endpoint changes; returns false
         // when COM refuses to register, so callers can fall back to polling.
         startDefaultDeviceWatch: AudioDevice.startDefaultDeviceWatch,

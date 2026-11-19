@@ -257,7 +257,70 @@ body[data-use-native-animation="false"] {
 .macchiato-separator {
     border: none;
     border-top: 1px solid var(--tray-border);
-    margin: 8px 0 16px;
+    margin: 8px 0 12px;
+}
+
+// Routing control above the DAC volume. Kept on one line so the panel height
+// stays predictable across localizations.
+.macchiato-output {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    line-height: 1.2;
+}
+
+.macchiato-output-label {
+    opacity: 0.72;
+}
+
+.macchiato-output-action {
+    max-width: 72%;
+    padding: 5px 9px;
+    border: 1px solid var(--tray-border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--tray-text);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+
+    &:hover:not(:disabled) {
+        background: var(--sidebar-item-hover);
+    }
+
+    &:focus-visible {
+        outline: 1px solid var(--input-border-hover);
+        outline-offset: 1px;
+    }
+
+    &:disabled {
+        cursor: default;
+    }
+
+    &[data-state="current"] {
+        padding-right: 0;
+        border-color: transparent;
+        background: transparent;
+        opacity: 0.55;
+    }
+
+    &[data-state="unavailable"] {
+        opacity: 0.45;
+    }
+
+    &[data-state="failed"] {
+        border-color: var(--muted-color);
+        background: transparent;
+        color: var(--muted-color);
+    }
 }
 
 $overlayBarWidth: 11px;
