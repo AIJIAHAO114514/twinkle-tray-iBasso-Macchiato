@@ -56,10 +56,12 @@ Twinkle-Tray-1.18.0-beta2-ibassoMacchiato-1.0.0.exe
 
 `package.json` 的 `version` 走这条分支自己的版本线（当前 `1.0.0`），上游基线固定在文件名里，一眼能看出是基于哪个上游版本改的。
 
-发版流程：打 `v*` 标签并推送即可，`Release` 工作流会用标签覆盖版本号、打包 NSIS 安装器并挂到 GitHub Release。
+发版流程：**每次推送到 `master` 都会自动打标签、打包 NSIS 安装器并发布 GitHub Release**。自动版本号取当前 `1.0.x` 版本线，补丁号使用 GitHub Actions 运行号（例如 `v1.0.12`），不会重复。
+
+也可以手动指定版本，或推送 `v*` 标签覆盖自动版本：
 
 ```
-git tag -a v1.0.0 -m "..." && git push origin v1.0.0
+git tag -a v1.0.20 -m "..." && git push origin v1.0.20
 ```
 
 ## 已知限制

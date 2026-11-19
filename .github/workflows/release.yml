@@ -1,17 +1,19 @@
 name: Release
 
-# The upstream CI workflow only uploads build artifacts. This one publishes an
-# installer to GitHub Releases, so the fork can be installed without a local
-# toolchain.
+# Every push to the shipping branch produces an installer and publishes it as a
+# GitHub Release. Tags and manual runs can still pin an explicit version.
 on:
   push:
+    branches:
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to stamp and publish, e.g. 1.18.0-macchiato.1'
-        required: true
+        description: 'Optional version override, e.g. 1.0.5; blank bumps the patch automatically'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -24,6 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         name: Read repository
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v6
@@ -38,14 +42,51 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Stamp version from the tag
+      - name: Resolve release version
+        id: version
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          DISPATCH_VERSION: ${{ inputs.version }}
         run: |
-          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.version }}' } else { '${{ github.ref_name }}' }
-          if (-not $version) { throw 'No version to release' }
+          $base = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $version = ''
+
+          if ($env:EVENT_NAME -eq 'workflow_dispatch') {
+            $version = $env:DISPATCH_VERSION.Trim()
+          } elseif ($env:REF_TYPE -eq 'tag') {
+            $version = $env:REF_NAME
+          }
+
           $version = $version -replace '^v', ''
-          npm version $version --no-git-tag-version --allow-same-version
+
+          if (-not $version) {
+            # 1.0.0 + run 12 -> 1.0.12. Stable semver, monotonic, and unique per
+            # workflow run, so a branch push can never reuse an existing tag.
+            $parts = $base.Split('.')
+            if ($parts.Length -lt 2) { throw "Unsupported base version: $base" }
+            $version = "$($parts[0]).$($parts[1]).$($env:RUN_NUMBER)"
+          }
+
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$') {
+            throw "Invalid version: $version"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
           Write-Host "Releasing $version"
+
+      - name: Stamp version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: npm version $env:RELEASE_VERSION --no-git-tag-version --allow-same-version
+
+      - name: Test
+        run: npm test
 
       - name: Build renderer
         run: npm run parcel-build
@@ -60,9 +101,12 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          name: Twinkle Tray 1.18.0-beta2 · iBasso Macchiato · ${{ inputs.version || github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Twinkle Tray 1.18.0-beta2 · iBasso Macchiato · ${{ steps.version.outputs.version }}
           files: dist/*.exe
           generate_release_notes: true
           fail_on_unmatched_files: true
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
