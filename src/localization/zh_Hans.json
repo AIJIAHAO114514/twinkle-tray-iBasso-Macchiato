@@ -256,6 +256,7 @@
     "TRAY_MACCHIATO_MUTED": "已静音",
     "TRAY_MACCHIATO_CONSOLE": "Macchiato Web 控制台",
     "PANEL_MACCHIATO_AUDIO_OUTPUT": "音频输出",
+    "PANEL_MACCHIATO_AUDIO_OUTPUT_MENU": "选择音频输出",
     "PANEL_MACCHIATO_SET_DEFAULT": "切换到 Macchiato",
     "PANEL_MACCHIATO_DEFAULT_OUTPUT": "当前默认输出",
     "PANEL_MACCHIATO_NO_OUTPUT": "未检测到音频输出",

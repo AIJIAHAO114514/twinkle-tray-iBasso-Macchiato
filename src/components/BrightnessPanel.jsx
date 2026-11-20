@@ -426,9 +426,11 @@ const BrightnessPanel = memo(function BrightnessPanel() {
               current: T.t("PANEL_MACCHIATO_DEFAULT_OUTPUT"),
               unavailable: T.t("PANEL_MACCHIATO_NO_OUTPUT"),
               switching: T.t("PANEL_MACCHIATO_SWITCHING"),
-              failed: T.t("PANEL_MACCHIATO_SWITCH_FAILED")
+              failed: T.t("PANEL_MACCHIATO_SWITCH_FAILED"),
+              menu: T.t("PANEL_MACCHIATO_AUDIO_OUTPUT_MENU")
             }}
             onSelect={() => window.ipc.invoke("macchiato-set-default-output")}
+            onOpenMenu={() => window.ipc.invoke("macchiato-open-audio-output-menu")}
           />
           {dac.connected ? (
             <div className="monitor-sliders" key="macchiato-panel">{getMacchiatoSlider()}</div>

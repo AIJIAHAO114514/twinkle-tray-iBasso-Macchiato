@@ -114,7 +114,7 @@ class MacchiatoService extends EventEmitter {
     // block waiting for the main process.
     ipcMain.handle('macchiato-get-state', () => this.getState())
     ipcMain.handle('macchiato-get-audio-output', () => this.getAudioOutputState())
-    ipcMain.handle('macchiato-set-default-output', () => this.setDefaultOutput())
+    ipcMain.handle('macchiato-set-default-output', (event, deviceId) => this.setDefaultOutput(deviceId))
     ipcMain.on('macchiato-set-volume', (event, level) => this.setVolume(level))
     ipcMain.on('macchiato-toggle-mute', () => this.toggleMute())
   }
@@ -151,19 +151,22 @@ class MacchiatoService extends EventEmitter {
     return { ...this.audioOutput }
   }
 
-  _findMatchingAudioEndpoint() {
-    const needle = String(this.getSettings()?.audioDeviceMatch || "").trim().toLowerCase()
-    if (!needle) return null
-
-    let devices = []
+  // Every active Windows playback endpoint. This is shared by the DAC button
+  // and the full device menu, so both always see the same device list.
+  getAudioOutputs() {
     try {
-      devices = typeof AudioDevice.getRenderDevices === "function"
+      return typeof AudioDevice.getRenderDevices === "function"
         ? AudioDevice.getRenderDevices()
         : [AudioDevice.getDefaultRenderDevice()].filter(Boolean)
     } catch (e) {
       console.log("Macchiato: audio device query failed:", e.message)
-      return null
+      return []
     }
+  }
+
+  _findMatchingAudioEndpoint(devices = this.getAudioOutputs()) {
+    const needle = String(this.getSettings()?.audioDeviceMatch || "").trim().toLowerCase()
+    if (!needle) return null
 
     const matches = devices.filter(device => matchesAudioDevice(device, needle))
     // If several endpoints match, prefer the one Windows already uses.
@@ -178,6 +181,10 @@ class MacchiatoService extends EventEmitter {
       ? { available: true, isDefault: !!endpoint.isDefault, displayName: endpoint.displayName || "" }
       : { ...EMPTY_AUDIO_OUTPUT }
 
+    this._applyAudioOutput(next)
+  }
+
+  _applyAudioOutput(next) {
     const previous = this.audioOutput
     const outputChanged = previous.available !== next.available ||
       previous.isDefault !== next.isDefault ||
@@ -198,10 +205,19 @@ class MacchiatoService extends EventEmitter {
     this.refreshAudioOutput()
   }
 
-  async setDefaultOutput() {
-    const endpoint = this._findMatchingAudioEndpoint()
+  async setDefaultOutput(deviceId = null) {
+    const devices = this.getAudioOutputs()
+    const requestedId = typeof deviceId === "string" && deviceId.trim() ? deviceId.trim() : null
+    const endpoint = requestedId
+      ? devices.find(device => device.id === requestedId)
+      : this._findMatchingAudioEndpoint(devices)
+
     if (!endpoint) {
-      return { ok: false, code: "not-found", message: "Macchiato playback endpoint not found" }
+      return {
+        ok: false,
+        code: "not-found",
+        message: requestedId ? "Playback endpoint not found" : "Macchiato playback endpoint not found"
+      }
     }
 
     let result
@@ -215,18 +231,23 @@ class MacchiatoService extends EventEmitter {
       return { ok: false, code: "failed", message: result?.message || "Could not switch output" }
     }
 
-    // Reflect the change immediately; the COM notification confirms it a moment
-    // later, and the reconciliation timer corrects us if Windows silently refused.
-    this.audioOutput = {
-      available: true,
-      isDefault: true,
-      displayName: endpoint.displayName || ""
-    }
-    this.emit('audio-output', this.getAudioOutputState())
-    if (this.audioOutputMatches !== true) {
-      this.audioOutputMatches = true
-      this.emit('audio-match', true)
-    }
+    // Reflect the change immediately. The selected endpoint can be any output,
+    // but audioOutput must continue to describe the DAC specifically.
+    const optimisticDevices = devices.map(device => ({
+      ...device,
+      isDefault: device.id === endpoint.id
+    }))
+    const dacEndpoint = this._findMatchingAudioEndpoint(optimisticDevices)
+    this._applyAudioOutput(dacEndpoint
+      ? {
+          available: true,
+          isDefault: !!dacEndpoint.isDefault,
+          displayName: dacEndpoint.displayName || ""
+        }
+      : { ...EMPTY_AUDIO_OUTPUT })
+
+    // The COM notification confirms it a moment later, and the reconciliation
+    // timer corrects us if Windows silently refused.
     setTimeout(() => this.refreshAudioOutput(), 400)
 
     return { ok: true, displayName: endpoint.displayName || "" }

@@ -4657,7 +4657,31 @@ function initMacchiato() {
   })
 
   macchiato.addIpc(ipcMain)
+  ipcMain.handle('macchiato-open-audio-output-menu', event => openMacchiatoAudioOutputMenu(event))
   macchiato.init()
+}
+
+// Native popup for the small hamburger button in the panel. It is built on
+// demand so the checked device and hotplugged endpoints are always current.
+function openMacchiatoAudioOutputMenu(event) {
+  const outputs = macchiato ? macchiato.getAudioOutputs() : []
+  const template = outputs.length ? outputs.map(device => ({
+    label: device.displayName || device.endpointName || device.deviceName || device.id,
+    type: 'radio',
+    checked: !!device.isDefault,
+    click: async () => {
+      const result = await macchiato.setDefaultOutput(device.id)
+      if (!result?.ok) console.log("Macchiato: could not switch output:", result?.message)
+    }
+  })) : [{
+    label: T.t("PANEL_MACCHIATO_NO_OUTPUT"),
+    enabled: false
+  }]
+
+  const menu = Menu.buildFromTemplate(template)
+  const owner = BrowserWindow.fromWebContents(event.sender)
+  menu.popup(owner ? { window: owner } : {})
+  return true
 }
 
 //

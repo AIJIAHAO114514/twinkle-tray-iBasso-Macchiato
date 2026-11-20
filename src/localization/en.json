@@ -307,6 +307,7 @@
     "TRAY_MACCHIATO_MUTED": "Muted",
     "TRAY_MACCHIATO_CONSOLE": "Macchiato web console",
     "PANEL_MACCHIATO_AUDIO_OUTPUT": "Audio output",
+    "PANEL_MACCHIATO_AUDIO_OUTPUT_MENU": "Choose audio output",
     "PANEL_MACCHIATO_SET_DEFAULT": "Switch to Macchiato",
     "PANEL_MACCHIATO_DEFAULT_OUTPUT": "Current output",
     "PANEL_MACCHIATO_NO_OUTPUT": "Output not found",

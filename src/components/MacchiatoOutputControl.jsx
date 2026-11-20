@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react"
 // separate component from MacchiatoSlider: switching the Windows output and
 // changing the device volume are different actions with different failure
 // modes, even though both belong to the same DAC.
-export default function MacchiatoOutputControl({ output, labels, onSelect }) {
+export default function MacchiatoOutputControl({ output, labels, onSelect, onOpenMenu }) {
     const [pending, setPending] = useState(false)
     const [failed, setFailed] = useState(false)
 
@@ -36,19 +36,39 @@ export default function MacchiatoOutputControl({ output, labels, onSelect }) {
         }
     }
 
+    const handleMenuClick = async () => {
+        if (!onOpenMenu) return
+        try {
+            await onOpenMenu()
+        } catch (e) {
+            console.log("Could not open the audio output menu", e)
+        }
+    }
+
     return (
         <div className="macchiato-output">
             <div className="macchiato-output-label">{labels.title}</div>
-            <button
-                type="button"
-                className="macchiato-output-action"
-                data-state={status}
-                disabled={status !== "set" && status !== "failed"}
-                title={output.displayName || undefined}
-                onClick={handleClick}
-            >
-                {labels[status]}
-            </button>
+            <div className="macchiato-output-actions">
+                <button
+                    type="button"
+                    className="macchiato-output-action"
+                    data-state={status}
+                    disabled={status !== "set" && status !== "failed"}
+                    title={output.displayName || undefined}
+                    onClick={handleClick}
+                >
+                    {labels[status]}
+                </button>
+                <button
+                    type="button"
+                    className="macchiato-output-menu"
+                    title={labels.menu}
+                    aria-label={labels.menu}
+                    onClick={handleMenuClick}
+                >
+                    <span aria-hidden="true">&#xE700;</span>
+                </button>
+            </div>
         </div>
     )
 }
