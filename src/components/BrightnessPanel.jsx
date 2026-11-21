@@ -380,8 +380,8 @@ const BrightnessPanel = memo(function BrightnessPanel() {
   const quickSwitchName = quickSwitchOutput.displayName || T.t("PANEL_MACCHIATO_AUDIO_OUTPUT")
   const hasQuickSwitchOutput = !!quickSwitchOutput.id
   const hasCurrentOutput = !!dac.currentOutput?.id
-  // The menu is generic, so it stays available even when the quick-switch
-  // target is automatic and the DAC is unplugged.
+  // The menu is generic, so it stays available even when there is no
+  // switchable target (no recorded previous device, DAC unplugged, etc.).
   const showOutputControl = hasQuickSwitchOutput || hasCurrentOutput || dac.connected || dac.audioOutput.available
   const getActiveVolumeSlider = () => (
     <MacchiatoSlider
@@ -436,9 +436,6 @@ const BrightnessPanel = memo(function BrightnessPanel() {
               labels={{
                 title: T.t("PANEL_MACCHIATO_AUDIO_OUTPUT"),
                 set: T.t("PANEL_MACCHIATO_SET_DEFAULT", quickSwitchName),
-                current: T.t("PANEL_MACCHIATO_DEFAULT_OUTPUT"),
-                unavailable: T.t("PANEL_MACCHIATO_NO_OUTPUT"),
-                switching: T.t("PANEL_MACCHIATO_SWITCHING"),
                 failed: T.t("PANEL_MACCHIATO_SWITCH_FAILED"),
                 menu: T.t("PANEL_MACCHIATO_AUDIO_OUTPUT_MENU")
               }}

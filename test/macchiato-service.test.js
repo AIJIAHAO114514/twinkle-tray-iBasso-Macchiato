@@ -198,96 +198,151 @@ test('a failed endpoint watcher falls back to polling until switched', (t) => {
   assert.notStrictEqual(service._volumePollTimer, null)
 })
 
-test('quick switch target falls back to the matched DAC', () => {
-  const service = makeService(fakeAudio())
-  const target = service.getQuickSwitchOutputState(audioDevices)
-
-  assert.deepStrictEqual(target, {
-    id: 'dac',
-    available: true,
-    isDefault: false,
-    displayName: '耳机 (Macchiato)',
-    automatic: true
-  })
-})
-
-test('an explicit quick switch target overrides the DAC fallback', () => {
-  const service = makeService(fakeAudio(), fakeHid(), {
-    quickSwitchOutputId: 'realtek',
-    quickSwitchOutputName: '扬声器 (Realtek)'
-  })
-  const target = service.getQuickSwitchOutputState(audioDevices)
-
-  assert.strictEqual(target.id, 'realtek')
-  assert.strictEqual(target.displayName, '扬声器 (Realtek)')
-  assert.strictEqual(target.isDefault, true)
-  assert.strictEqual(target.automatic, false)
-})
-
-test('an offline quick switch target keeps its saved name and is unavailable', () => {
-  const service = makeService(fakeAudio(), fakeHid(), {
-    quickSwitchOutputId: 'offline-device',
-    quickSwitchOutputName: 'USB DAC'
-  })
-  const target = service.getQuickSwitchOutputState(audioDevices)
-
-  assert.deepStrictEqual(target, {
-    id: 'offline-device',
-    available: false,
-    isDefault: false,
-    displayName: 'USB DAC',
-    automatic: false
-  })
-})
-
-test('a renamed endpoint ID is recovered by its saved display name', () => {
-  const service = makeService(fakeAudio(), fakeHid(), {
-    quickSwitchOutputId: 'old-endpoint-id',
-    quickSwitchOutputName: '耳机 (Macchiato)'
-  })
-  const devices = [
-    { id: 'new-endpoint-id', displayName: '耳机 (Macchiato)', isDefault: false },
-    { id: 'realtek', displayName: '扬声器 (Realtek)', isDefault: true }
-  ]
-
-  const target = service.getQuickSwitchOutputState(devices)
-
-  assert.strictEqual(target.id, 'new-endpoint-id')
-  assert.strictEqual(target.available, true)
-  assert.strictEqual(target.automatic, false)
-})
-
-test('clearing the target restores automatic matching', () => {
-  const settings = {
-    quickSwitchOutputId: 'realtek',
-    quickSwitchOutputName: '扬声器 (Realtek)'
-  }
-  const service = makeService(fakeAudio(), fakeHid(), settings)
-
-  settings.quickSwitchOutputId = ''
-  settings.quickSwitchOutputName = ''
-  const target = service.getQuickSwitchOutputState(audioDevices)
-
-  assert.strictEqual(target.id, 'dac')
-  assert.strictEqual(target.automatic, true)
-})
-
-test('changing the quick switch setting refreshes the panel target', () => {
-  const settings = {}
+test('without a record the switch target is the next device in the list', () => {
   const audio = fakeAudio({
     getRenderDevices: () => audioDevices,
     getRenderDeviceVolume: () => ({ volume: 50, muted: false })
   })
-  const service = makeService(audio, fakeHid(), settings)
+  const service = makeService(audio)
+
+  service.refreshAudioOutput()
+
+  // The default (realtek) is the second entry, so "next in list" wraps to dac.
+  assert.strictEqual(service.getState().quickSwitchOutput.id, 'dac')
+  assert.strictEqual(service.getState().quickSwitchOutput.available, true)
+  assert.strictEqual(service.getState().quickSwitchOutput.displayName, '耳机 (Macchiato)')
+})
+
+test('switching outputs records the previous one as the switch target', async () => {
+  const audio = fakeAudio({
+    getRenderDevices: () => audioDevices,
+    getRenderDeviceVolume: () => ({ volume: 50, muted: false })
+  })
+  const service = makeService(audio)
 
   service.refreshAudioOutput()
   assert.strictEqual(service.getState().quickSwitchOutput.id, 'dac')
 
-  settings.quickSwitchOutputId = 'realtek'
-  settings.quickSwitchOutputName = '扬声器 (Realtek)'
-  service.refreshAudioOutput()
+  const result = await service.setDefaultOutput('dac')
+
+  assert.strictEqual(result.ok, true)
+  // The device we just left becomes the "switch back" target.
   assert.strictEqual(service.getState().quickSwitchOutput.id, 'realtek')
   assert.strictEqual(service.getState().quickSwitchOutput.displayName, '扬声器 (Realtek)')
+})
+
+test('an external default change also records the previous output', () => {
+  let devices = [
+    { id: 'realtek', displayName: '扬声器 (Realtek)', isDefault: true },
+    { id: 'dac', displayName: '耳机 (Macchiato)', isDefault: false }
+  ]
+  const audio = fakeAudio({
+    getRenderDevices: () => devices,
+    getRenderDeviceVolume: () => ({ volume: 50, muted: false })
+  })
+  const service = makeService(audio)
+
+  service.refreshAudioOutput()
+  assert.strictEqual(service.lastUsedOutput, null)
+
+  // Windows (or another app) moves the default elsewhere.
+  devices = [
+    { id: 'realtek', displayName: '扬声器 (Realtek)', isDefault: false },
+    { id: 'dac', displayName: '耳机 (Macchiato)', isDefault: true }
+  ]
+  service.refreshAudioOutput()
+
+  assert.strictEqual(service.lastUsedOutput.id, 'realtek')
+  assert.strictEqual(service.getState().quickSwitchOutput.id, 'realtek')
+
+  // An unchanged default must not re-record anything.
+  const before = service.lastUsedOutput
+  service.refreshAudioOutput()
+  assert.strictEqual(service.lastUsedOutput, before)
+})
+
+test('an unplugged previous output falls back to the next device', () => {
+  const audio = fakeAudio({
+    getRenderDevices: () => audioDevices,
+    getRenderDeviceVolume: () => ({ volume: 50, muted: false })
+  })
+  const service = makeService(audio, fakeHid(), {
+    lastAudioOutputId: 'gone-endpoint',
+    lastAudioOutputName: 'USB DAC'
+  })
+
+  service.refreshAudioOutput()
+
+  assert.strictEqual(service.getState().quickSwitchOutput.id, 'dac')
+})
+
+test('a recorded previous output overrides the next-in-list fallback', () => {
+  const devices = [
+    { id: 'headphones', displayName: '耳机', isDefault: false },
+    { id: 'realtek', displayName: '扬声器 (Realtek)', isDefault: true },
+    { id: 'dac', displayName: '耳机 (Macchiato)', isDefault: false }
+  ]
+  const audio = fakeAudio({
+    getRenderDevices: () => devices,
+    getRenderDeviceVolume: () => ({ volume: 50, muted: false })
+  })
+  const service = makeService(audio, fakeHid(), {
+    lastAudioOutputId: 'headphones',
+    lastAudioOutputName: '耳机'
+  })
+
+  service.refreshAudioOutput()
+
+  // Next-in-list from realtek would be dac; the record wins.
+  assert.strictEqual(service.getState().quickSwitchOutput.id, 'headphones')
+  assert.strictEqual(service.getState().quickSwitchOutput.displayName, '耳机')
+})
+
+test('a single-device list leaves no switch target', () => {
+  const devices = [{ id: 'realtek', displayName: '扬声器 (Realtek)', isDefault: true }]
+  const audio = fakeAudio({
+    getRenderDevices: () => devices,
+    getRenderDeviceVolume: () => ({ volume: 50, muted: false })
+  })
+  const service = makeService(audio)
+
+  service.refreshAudioOutput()
+
+  assert.deepStrictEqual(service.getState().quickSwitchOutput, {
+    id: '',
+    available: false,
+    isDefault: false,
+    displayName: ''
+  })
+})
+
+test('the previous output is reported for persistence on every change', async () => {
+  const recorded = []
+  const audio = fakeAudio({
+    getRenderDevices: () => audioDevices,
+    getRenderDeviceVolume: () => ({ volume: 50, muted: false })
+  })
+  const service = new MacchiatoService({
+    getSettings: () => ({ audioDeviceMatch: 'Macchiato' }),
+    audioDevice: audio,
+    createDevice: () => fakeHid(),
+    onLastUsedOutput: (output) => recorded.push(output)
+  })
+  service.device = fakeHid()
+
+  service.refreshAudioOutput()
+  assert.deepStrictEqual(recorded, [])
+
+  await service.setDefaultOutput('dac')
+  assert.deepStrictEqual(recorded, [
+    { id: 'realtek', displayName: '扬声器 (Realtek)' }
+  ])
+
+  await service.setDefaultOutput('realtek')
+  assert.deepStrictEqual(recorded, [
+    { id: 'realtek', displayName: '扬声器 (Realtek)' },
+    { id: 'dac', displayName: '耳机 (Macchiato)' }
+  ])
 })
 
 test('volume preview is a separate pointer-release signal', () => {

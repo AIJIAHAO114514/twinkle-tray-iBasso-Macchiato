@@ -1,11 +1,20 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 
 // Compact routing control above the active volume row. It is deliberately a
 // separate component from MacchiatoSlider: switching the Windows output and
 // changing the device volume are different actions with different failure
 // modes, even though both refer to the current playback path.
+//
+// The switch action and the device menu are fully decoupled: the menu button
+// is always rendered on its own, and the switch button only appears when a
+// switchable target exists. The menu never disappears just because there is
+// nothing to switch to.
+//
+// A switch in progress keeps the button exactly as it was: a visible
+// in-progress label would read as flicker on such a fast action. A ref
+// guards against double clicks without a re-render.
 export default function MacchiatoOutputControl({ output, labels, onSelect, onOpenMenu }) {
-    const [pending, setPending] = useState(false)
+    const pendingRef = useRef(false)
     const [failed, setFailed] = useState(false)
 
     // A successful change from anywhere (this button, Windows, another app)
@@ -14,11 +23,7 @@ export default function MacchiatoOutputControl({ output, labels, onSelect, onOpe
         setFailed(false)
     }, [output.available, output.isDefault, output.displayName])
 
-    let status = "set"
-    if (!output.available) status = "unavailable"
-    else if (output.isDefault) status = "current"
-    else if (pending) status = "switching"
-    else if (failed) status = "failed"
+    const status = failed ? "failed" : "set"
 
     const handleMenuClick = async () => {
         if (!onOpenMenu) return
@@ -29,21 +34,10 @@ export default function MacchiatoOutputControl({ output, labels, onSelect, onOpe
         }
     }
 
-    // "Already current" and "target missing" have no switch action, so the
-    // status and the menu icon share one control: the whole row highlights and
-    // opens the menu as a single hit target. With no target at all the control
-    // is still shown as a neutral output picker, so the menu never disappears
-    // just because the DAC is unplugged.
-    const hasTarget = !!output.id
-    const menuOnly = !hasTarget || status === "current" || status === "unavailable"
-    const pickerLabel = hasTarget ? labels[status] : labels.menu
-    const pickerTitle = hasTarget ? (output.displayName || labels.menu) : labels.menu
-    const pickerAriaLabel = hasTarget ? `${labels.menu}: ${labels[status]}` : labels.menu
-
     const handleClick = async () => {
-        if (pending || !onSelect) return
+        if (pendingRef.current || !onSelect) return
 
-        setPending(true)
+        pendingRef.current = true
         setFailed(false)
         try {
             const result = await onSelect()
@@ -52,49 +46,37 @@ export default function MacchiatoOutputControl({ output, labels, onSelect, onOpe
             console.log("Could not switch the audio output", e)
             setFailed(true)
         } finally {
-            setPending(false)
+            pendingRef.current = false
         }
     }
+
+    const hasTarget = !!(output.id && output.available)
 
     return (
         <div className="macchiato-output">
             <div className="macchiato-output-label">{labels.title}</div>
             <div className="macchiato-output-actions">
-                {menuOnly ? (
+                {hasTarget ? (
                     <button
                         type="button"
-                        className="macchiato-output-picker"
-                        title={pickerTitle}
-                        aria-haspopup="menu"
-                        aria-label={pickerAriaLabel}
-                        onClick={handleMenuClick}
+                        className="macchiato-output-action"
+                        data-state={status}
+                        title={output.displayName || undefined}
+                        onClick={handleClick}
                     >
-                        <span className="macchiato-output-status">{pickerLabel}</span>
-                        <span className="macchiato-output-menu-icon" aria-hidden="true">&#xE700;</span>
+                        {labels[status]}
                     </button>
-                ) : (
-                    <React.Fragment>
-                        <button
-                            type="button"
-                            className="macchiato-output-action"
-                            data-state={status}
-                            disabled={status === "switching"}
-                            title={output.displayName || undefined}
-                            onClick={handleClick}
-                        >
-                            {labels[status]}
-                        </button>
-                        <button
-                            type="button"
-                            className="macchiato-output-menu"
-                            title={labels.menu}
-                            aria-label={labels.menu}
-                            onClick={handleMenuClick}
-                        >
-                            <span aria-hidden="true">&#xE700;</span>
-                        </button>
-                    </React.Fragment>
-                )}
+                ) : null}
+                <button
+                    type="button"
+                    className="macchiato-output-menu"
+                    title={labels.menu}
+                    aria-label={labels.menu}
+                    aria-haspopup="menu"
+                    onClick={handleMenuClick}
+                >
+                    <span aria-hidden="true">&#xE700;</span>
+                </button>
             </div>
         </div>
     )

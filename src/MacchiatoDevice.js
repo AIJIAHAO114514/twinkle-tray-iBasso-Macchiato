@@ -118,10 +118,6 @@ class MacchiatoDevice extends EventEmitter {
     return !this._unsupported;
   }
 
-  get volumeOrZero() {
-    return this.volume === null ? 0 : this.volume;
-  }
-
   getState() {
     return {
       id: this.id,

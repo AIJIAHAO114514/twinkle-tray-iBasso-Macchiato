@@ -975,9 +975,10 @@ const defaultSettings = {
   // Substring (case-insensitive) matched against the default audio output
   // device name to decide whether the "active" tray icon is shown.
   audioDeviceMatch: "macchiato",
-  // Target of the panel's one-click switch button. Empty means "match the DAC".
-  quickSwitchOutputId: "",
-  quickSwitchOutputName: "",
+  // Previously used audio output. Maintained by MacchiatoService so the
+  // panel's switch button can offer to switch back across restarts.
+  lastAudioOutputId: "",
+  lastAudioOutputName: "",
   useAcrylic: false,
   useNativeAnimation: false,
   sleepAction: "ps",
@@ -1461,9 +1462,7 @@ function processSettings(newSettings = {}, sendUpdate = true) {
       lightSensor.changeSettings(newSettings.lightSensor);
     }
 
-    if (newSettings.audioDeviceMatch !== undefined ||
-        newSettings.quickSwitchOutputId !== undefined ||
-        newSettings.quickSwitchOutputName !== undefined) {
+    if (newSettings.audioDeviceMatch !== undefined) {
       macchiato?.refreshAudioMatch()
     }
 
@@ -4660,7 +4659,15 @@ app.on('quit', () => {
 function initMacchiato() {
   if (macchiato) return
 
-  macchiato = new MacchiatoService({ getSettings: () => settings })
+  macchiato = new MacchiatoService({
+    getSettings: () => settings,
+    // Persist the "switch back" target. processAfter=false: the service
+    // already pushes the change to the renderer through its own events.
+    onLastUsedOutput: (output) => writeSettings({
+      lastAudioOutputId: output?.id || "",
+      lastAudioOutputName: output?.displayName || ""
+    }, false)
+  })
 
   macchiato.on('change', state => {
     setTrayPercent()

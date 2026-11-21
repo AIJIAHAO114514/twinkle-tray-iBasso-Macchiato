@@ -5,7 +5,7 @@ const EMPTY = {
     volume: null,
     muted: false,
     currentOutput: { id: "", displayName: "", isDac: false },
-    quickSwitchOutput: { id: "", available: false, isDefault: false, displayName: "", automatic: true },
+    quickSwitchOutput: { id: "", available: false, isDefault: false, displayName: "" },
     systemVolume: { deviceId: "", volume: null, muted: false },
     activeVolume: { source: "system", displayName: "", volume: null, muted: false, available: false }
 }

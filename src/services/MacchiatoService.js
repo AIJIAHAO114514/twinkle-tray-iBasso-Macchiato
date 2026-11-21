@@ -10,7 +10,6 @@ const AUDIO_RECONCILE_MS = 30000
 
 const EMPTY_DEVICE_STATE = { connected: false, volume: null, muted: false }
 const EMPTY_AUDIO_OUTPUT = { id: "", available: false, isDefault: false, displayName: "" }
-const EMPTY_QUICK_SWITCH_OUTPUT = { ...EMPTY_AUDIO_OUTPUT, automatic: true }
 const EMPTY_CURRENT_OUTPUT = { id: "", displayName: "", isDac: false }
 const EMPTY_SYSTEM_VOLUME = { deviceId: "", volume: null, muted: false }
 const SYSTEM_VOLUME_COALESCE_MS = 25
@@ -48,17 +47,21 @@ function clampVolume(value) {
  *   audio-output  (state)  DAC playback endpoint availability or default state
  */
 class MacchiatoService extends EventEmitter {
-  constructor({ getSettings, audioDevice = AudioDevice, createDevice = () => new MacchiatoDevice() }) {
+  constructor({ getSettings, audioDevice = AudioDevice, createDevice = () => new MacchiatoDevice(), onLastUsedOutput = null }) {
     super()
     this.getSettings = getSettings
     this.audioDevice = audioDevice
     this.createDevice = createDevice
+    // The host persists this callback's argument, so "switch back" survives
+    // restarts. Failures must never break the audio path itself.
+    this.onLastUsedOutput = onLastUsedOutput
     this.device = null
     // null = not resolved yet, so the first probe always publishes a value.
     this.audioOutputMatches = null
     this.audioOutput = { ...EMPTY_AUDIO_OUTPUT }
-    this.quickSwitchOutput = { ...EMPTY_QUICK_SWITCH_OUTPUT }
+    this.quickSwitchOutput = { ...EMPTY_AUDIO_OUTPUT }
     this.currentOutput = { ...EMPTY_CURRENT_OUTPUT }
+    this.lastUsedOutput = this._loadLastUsedOutput()
     this.systemVolume = { ...EMPTY_SYSTEM_VOLUME }
     this._reconcileTimer = null
     this._volumePollTimer = null
@@ -274,7 +277,6 @@ class MacchiatoService extends EventEmitter {
     ipcMain.handle('macchiato-get-state', () => this.getState())
     ipcMain.handle('macchiato-get-audio-output', () => this.getAudioOutputState())
     ipcMain.handle('macchiato-get-audio-outputs', () => this.getAudioOutputs())
-    ipcMain.handle('macchiato-get-quick-switch-output', () => this.getQuickSwitchOutputState())
     ipcMain.handle('macchiato-set-default-output', (event, deviceId) => this.setDefaultOutput(deviceId))
     let lastVolumeInputOk = false
     ipcMain.on('macchiato-set-volume', (event, level) => {
@@ -350,57 +352,75 @@ class MacchiatoService extends EventEmitter {
     return matches.find(device => device.isDefault) || matches[0] || null
   }
 
-  // The panel's one-click switch target. An explicit setting wins; otherwise
-  // fall back to the Macchiato endpoint so existing installs keep their button.
-  _buildQuickSwitchOutput(devices) {
-    const settings = this.getSettings() || {}
-    const configuredId = String(settings.quickSwitchOutputId || "").trim()
-    const configuredName = String(settings.quickSwitchOutputName || "").trim()
-    let target = configuredId
-      ? devices.find(device => device.id === configuredId)
-      : this._findMatchingAudioEndpoint(devices)
+  // A target built from a live device list entry is always usable.
+  _switchTarget(device) {
+    return {
+      id: device.id,
+      available: true,
+      isDefault: false,
+      displayName: device.displayName || ""
+    }
+  }
 
-    // Windows can re-enumerate an endpoint under a new ID after a driver or
-    // port change. Keep a saved target usable when its display name still
-    // matches exactly.
-    if (!target && configuredId && configuredName) {
-      const needle = this._normalizeAudioName(configuredName)
-      target = devices.find(device =>
-        this._normalizeAudioName(device.displayName) === needle
-      )
+  // The panel's one-click switch target: the previously used output when one
+  // is recorded and still present, otherwise the next device in the list.
+  _buildQuickSwitchOutput(devices) {
+    const currentId = this.currentOutput.id
+    const lastUsedId = this.lastUsedOutput?.id || ""
+    if (lastUsedId && lastUsedId !== currentId) {
+      const target = devices.find(device => device.id === lastUsedId)
+      if (target) return this._switchTarget(target)
     }
 
-    if (!target) {
-      return {
-        id: configuredId,
-        available: false,
-        isDefault: false,
-        displayName: configuredName,
-        automatic: !configuredId
+    // No usable record (fresh install, target unplugged, or the record is the
+    // current device): advance one position through the device list, wrapping
+    // around, and skip the current device itself.
+    const count = devices.length
+    const currentIndex = devices.findIndex(device => device && device.id === currentId)
+    const startIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % count
+    for (let i = 0; i < count; i++) {
+      const candidate = devices[(startIndex + i) % count]
+      if (candidate && candidate.id && candidate.id !== currentId) {
+        return this._switchTarget(candidate)
       }
     }
 
-    return {
-      id: target.id,
-      available: true,
-      isDefault: !!target.isDefault,
-      displayName: target.displayName || "",
-      automatic: !configuredId
-    }
-  }
-
-  _normalizeAudioName(name) {
-    return String(name || "").trim().toLowerCase().replace(/\s+/g, " ")
-  }
-
-  getQuickSwitchOutputState(devices = this.getAudioOutputs()) {
-    return this._buildQuickSwitchOutput(devices)
+    return { ...EMPTY_AUDIO_OUTPUT }
   }
 
   _setCurrentOutput(next) {
     const output = next || { ...EMPTY_CURRENT_OUTPUT }
-    if (this.currentOutput.id !== output.id) this._cancelSystemVolumeWrite()
+    if (this.currentOutput.id !== output.id) {
+      // The endpoint we just left is the "switch back" target, whether the
+      // change came from this app, Windows, or another app.
+      if (this.currentOutput.id) this._recordLastUsedOutput(this.currentOutput)
+      this._cancelSystemVolumeWrite()
+    }
     this.currentOutput = output
+  }
+
+  _loadLastUsedOutput() {
+    const settings = this.getSettings?.() || {}
+    const id = String(settings.lastAudioOutputId || "").trim()
+    if (!id) return null
+    return { id, displayName: String(settings.lastAudioOutputName || "").trim() }
+  }
+
+  _recordLastUsedOutput(output) {
+    const displayName = (output && output.displayName) || ""
+    const changed = !this.lastUsedOutput ||
+      this.lastUsedOutput.id !== output.id ||
+      this.lastUsedOutput.displayName !== displayName
+    if (!changed) return
+
+    this.lastUsedOutput = { id: output.id, displayName }
+    if (this.onLastUsedOutput) {
+      try {
+        this.onLastUsedOutput({ ...this.lastUsedOutput })
+      } catch (e) {
+        console.log("Macchiato: could not record the last used output:", e.message)
+      }
+    }
   }
 
   refreshAudioOutput() {

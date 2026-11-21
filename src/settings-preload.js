@@ -72,10 +72,6 @@ function getAudioOutputs() {
     return ipc.invoke('macchiato-get-audio-outputs')
 }
 
-function getQuickSwitchOutput() {
-    return ipc.invoke('macchiato-get-quick-switch-output')
-}
-
 function resetSettings() {
     ipc.send('reset-settings')
 }
@@ -264,7 +260,6 @@ window.sendSettingsImmediate = sendSettingsImmediate
 window.requestSettings = requestSettings
 window.resetSettings = resetSettings
 window.getAudioOutputs = getAudioOutputs
-window.getQuickSwitchOutput = getQuickSwitchOutput
 window.requestDDCSafetyStatus = requestDDCSafetyStatus
 window.retryDDCValidation = retryDDCValidation
 window.openURL = openURL
