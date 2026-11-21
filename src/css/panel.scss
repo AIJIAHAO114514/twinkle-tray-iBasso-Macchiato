@@ -242,6 +242,15 @@ body[data-use-native-animation="false"] {
             cursor: pointer;
         }
 
+        // System output names are much longer than "iBasso Macchiato"; keep the
+        // row one line high instead of letting the name wrap the panel.
+        .name-row .title {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         // Only the in-panel row wants its natural height and the extra padding.
         // In the overlay the row has to line up with a single display exactly
         // (28px row on Win11, 136px bar on Win10), so it is left untouched.
@@ -279,7 +288,7 @@ body[data-use-native-animation="false"] {
 .macchiato-output-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     min-width: 0;
     max-width: 76%;
 }
@@ -287,7 +296,7 @@ body[data-use-native-animation="false"] {
 .macchiato-output-action {
     flex: 1 1 auto;
     min-width: 0;
-    padding: 5px 9px;
+    padding: 6px 9px;
     border: 1px solid var(--tray-border);
     border-radius: 4px;
     background: transparent;
@@ -314,17 +323,6 @@ body[data-use-native-animation="false"] {
         cursor: default;
     }
 
-    &[data-state="current"] {
-        padding-right: 0;
-        border-color: transparent;
-        background: transparent;
-        opacity: 0.55;
-    }
-
-    &[data-state="unavailable"] {
-        opacity: 0.45;
-    }
-
     &[data-state="failed"] {
         border-color: var(--muted-color);
         background: transparent;
@@ -332,22 +330,69 @@ body[data-use-native-animation="false"] {
     }
 }
 
+// Current and unavailable states have no switch action, so the status text and
+// the menu icon live in one control. The whole box highlights and opens the
+// menu, matching the standalone menu button's border and hover treatment.
+.macchiato-output-picker {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 7px 6px 9px;
+    border: 1px solid var(--tray-border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--tray-text);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.15;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+
+    &:hover {
+        background: var(--sidebar-item-hover);
+    }
+
+    &:focus-visible {
+        outline: 1px solid var(--input-border-hover);
+        outline-offset: 1px;
+    }
+}
+
+.macchiato-output-status {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    opacity: 0.55;
+}
+
+.macchiato-output-menu-icon {
+    flex: 0 0 auto;
+    font-family: "Segoe MDL2 Assets";
+    font-size: 13px;
+    line-height: 1.15;
+}
+
 .macchiato-output-menu {
-    flex: 0 0 26px;
-    width: 26px;
-    height: 26px;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 28px;
     padding: 0;
     border: 1px solid var(--tray-border);
     border-radius: 4px;
     background: transparent;
     color: var(--tray-text);
     cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 
     span {
         display: block;
         font-family: "Segoe MDL2 Assets";
         font-size: 13px;
-        line-height: 24px;
+        line-height: 26px;
     }
 
     &:hover {

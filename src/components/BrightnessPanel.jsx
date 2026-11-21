@@ -370,21 +370,33 @@ const BrightnessPanel = memo(function BrightnessPanel() {
     }
   }
 
-  // Volume OSD. The DAC row is its own component but shares RangeInput with the
-  // display sliders, so it inherits both the Win11 row and the Win10 bar layout.
-  const getMacchiatoSlider = () => (
+  // The row follows the active output: DAC HID while the Macchiato is the
+  // default, Windows endpoint volume for every other device.
+  const activeVolume = dac.activeVolume
+  // Both HID and endpoint-backed volume use the Windows playback device name.
+  const activeLabel = activeVolume.displayName || T.t("PANEL_MACCHIATO_AUDIO_OUTPUT")
+  const quickSwitchOutput = dac.quickSwitchOutput
+  // Use the same Windows endpoint name shown in the settings dropdown.
+  const quickSwitchName = quickSwitchOutput.displayName || T.t("PANEL_MACCHIATO_AUDIO_OUTPUT")
+  const hasQuickSwitchOutput = !!quickSwitchOutput.id
+  const hasCurrentOutput = !!dac.currentOutput?.id
+  // The menu is generic, so it stays available even when the quick-switch
+  // target is automatic and the DAC is unplugged.
+  const showOutputControl = hasQuickSwitchOutput || hasCurrentOutput || dac.connected || dac.audioOutput.available
+  const getActiveVolumeSlider = () => (
     <MacchiatoSlider
-      label={T.t("TRAY_MACCHIATO_NAME")}
-      volume={dac.volume}
-      muted={dac.muted}
+      label={activeLabel}
+      volume={activeVolume.volume}
+      muted={activeVolume.muted}
       onVolumeChange={(value) => window.ipc.send("macchiato-set-volume", value)}
+      onVolumePreview={() => window.ipc.send("macchiato-preview-volume")}
       onToggleMute={() => window.ipc.send("macchiato-toggle-mute")}
       scrollAmount={window.settings?.scrollFlyoutAmount}
     />
   )
 
   const getVolumeOsd = () => (
-    <div className="monitor-sliders" key="macchiato-osd">{getMacchiatoSlider()}</div>
+    <div className="monitor-sliders" key="active-volume-osd">{getActiveVolumeSlider()}</div>
   )
 
   return (
@@ -415,25 +427,27 @@ const BrightnessPanel = memo(function BrightnessPanel() {
         </div>
       </div>
       {state.sleeping ? (<div></div>) : (overlayState.kind === "volume" ? getVolumeOsd() : getMonitors())}
-      {state.sleeping || overlayState.kind !== null || (!dac.connected && !dac.audioOutput.available) ? null : (
+      {state.sleeping || overlayState.kind !== null || (!showOutputControl && !activeVolume.available) ? null : (
         <div className="macchiato-section">
           <hr className="macchiato-separator" />
-          <MacchiatoOutputControl
-            output={dac.audioOutput}
-            labels={{
-              title: T.t("PANEL_MACCHIATO_AUDIO_OUTPUT"),
-              set: T.t("PANEL_MACCHIATO_SET_DEFAULT"),
-              current: T.t("PANEL_MACCHIATO_DEFAULT_OUTPUT"),
-              unavailable: T.t("PANEL_MACCHIATO_NO_OUTPUT"),
-              switching: T.t("PANEL_MACCHIATO_SWITCHING"),
-              failed: T.t("PANEL_MACCHIATO_SWITCH_FAILED"),
-              menu: T.t("PANEL_MACCHIATO_AUDIO_OUTPUT_MENU")
-            }}
-            onSelect={() => window.ipc.invoke("macchiato-set-default-output")}
-            onOpenMenu={() => window.ipc.invoke("macchiato-open-audio-output-menu")}
-          />
-          {dac.connected ? (
-            <div className="monitor-sliders" key="macchiato-panel">{getMacchiatoSlider()}</div>
+          {showOutputControl ? (
+            <MacchiatoOutputControl
+              output={quickSwitchOutput}
+              labels={{
+                title: T.t("PANEL_MACCHIATO_AUDIO_OUTPUT"),
+                set: T.t("PANEL_MACCHIATO_SET_DEFAULT", quickSwitchName),
+                current: T.t("PANEL_MACCHIATO_DEFAULT_OUTPUT"),
+                unavailable: T.t("PANEL_MACCHIATO_NO_OUTPUT"),
+                switching: T.t("PANEL_MACCHIATO_SWITCHING"),
+                failed: T.t("PANEL_MACCHIATO_SWITCH_FAILED"),
+                menu: T.t("PANEL_MACCHIATO_AUDIO_OUTPUT_MENU")
+              }}
+              onSelect={() => window.ipc.invoke("macchiato-set-default-output", quickSwitchOutput.id)}
+              onOpenMenu={() => window.ipc.invoke("macchiato-open-audio-output-menu")}
+            />
+          ) : null}
+          {activeVolume.available ? (
+            <div className="monitor-sliders" key="active-volume-panel">{getActiveVolumeSlider()}</div>
           ) : null}
         </div>
       )}

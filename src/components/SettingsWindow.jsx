@@ -20,6 +20,7 @@ import { SettingsOption, SettingsChild } from "./SettingsOption";
 import SafeRender from "./SafeRender";
 import { getMonitorName, isAdjustableDisplay, displayLevel } from './utilts/monitor.util';
 import { LightSensorSettings } from "./light-sensor/LightSensorSettings";
+import AudioSettings from "./AudioSettings";
 
 import DefaultIcon from "../assets/tray-icons/dark/icon@4x.png"
 import MDL2Icon from "../assets/tray-icons/dark/mdl2@4x.png"
@@ -371,6 +372,11 @@ export default class SettingsWindow extends PureComponent {
                 id: "general",
                 label: T.t("SETTINGS_SIDEBAR_GENERAL"),
                 icon: "&#xE713;"
+            },
+            {
+                id: "audio",
+                label: T.t("SETTINGS_SIDEBAR_AUDIO"),
+                icon: "&#xE7F5;"
             },
             {
                 id: "monitors",
@@ -1471,6 +1477,10 @@ export default class SettingsWindow extends PureComponent {
                                     <SettingsOption title={T.t("SETTINGS_GENERAL_RESET_TITLE")} description={T.t("SETTINGS_GENERAL_RESET_DESC")} input={<a className="button" onClick={window.resetSettings}>{T.t("SETTINGS_GENERAL_RESET_BUTTON")}</a>} />
 
                                 </div>
+                            </SettingsPage>
+
+                            <SettingsPage current={this.state.activePage} id="audio">
+                                <AudioSettings T={T} renderToggle={this.renderToggle} />
                             </SettingsPage>
 
                             <SettingsPage current={this.state.activePage} id="time">

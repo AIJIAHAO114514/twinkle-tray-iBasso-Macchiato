@@ -20,7 +20,7 @@
     "build": "npm ci & npm run parcel-build && npm run electron-build",
     "build-all": "npm run build && npm run appx && npm run appx-arm64",
     "test-wmibridge": "node src/modules/wmi-bridge/example.js",
-    "test": "node --test test/macchiato-device.test.js"
+    "test": "node --test \"test/*.test.js\""
   },
   "keywords": [
     "electron",
@@ -78,6 +78,7 @@
       "src/Logger.js",
       "src/Monitors.js",
       "src/MacchiatoDevice.js",
+      "src/settings-schema.js",
       "src/services/MacchiatoService.js",
       "src/wmi-bridge-test.js",
       "src/vcp-codes.js",

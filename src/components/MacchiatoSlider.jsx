@@ -1,12 +1,11 @@
 import React, { Component } from "react"
 import RangeInput from "./RangeInput"
 
-// Volume row for the iBasso Macchiato DAC.
+// Volume row for the active playback output.
 //
-// Deliberately separate from Slider: a display slider maps a hardware level onto
-// a monitor, this one drives a USB DAC over HID and carries mute state. Both
-// share RangeInput for the actual control, so neither has to know about the
-// other's semantics.
+// The transport behind it changes (DAC HID or Windows endpoint volume), but the
+// row only deals with a level and a mute state. Display sliders stay separate
+// through Slider; both share RangeInput for the actual control.
 export default class MacchiatoSlider extends Component {
 
     constructor(props) {
@@ -14,6 +13,13 @@ export default class MacchiatoSlider extends Component {
         this.state = {
             level: this.clamp(props.volume)
         }
+        this.pointerGestureActive = false
+        this.pointerGestureChanged = false
+    }
+
+    componentWillUnmount() {
+        window.removeEventListener("pointerup", this.handlePointerUp)
+        window.removeEventListener("pointercancel", this.handlePointerUp)
     }
 
     // The DAC reports its own volume, so a change coming from the device (the
@@ -38,7 +44,29 @@ export default class MacchiatoSlider extends Component {
     handleChange = (event) => {
         // Clearing the field must not write 0 to the device mid-edit.
         if (event.target.value === "") return
+        // Only a pointer gesture on the track counts as a preview gesture.
+        // Keyboard, number-box edits and wheel scrolling stay silent.
+        if (this.pointerGestureActive) this.pointerGestureChanged = true
         this.commit(this.clamp(event.target.value))
+    }
+
+    // Preview exactly once on release, not on every intermediate drag value.
+    // The window listener catches a pointer released outside the slider.
+    handlePointerDown = () => {
+        this.pointerGestureActive = true
+        this.pointerGestureChanged = false
+        window.addEventListener("pointerup", this.handlePointerUp, { once: true })
+        window.addEventListener("pointercancel", this.handlePointerUp, { once: true })
+    }
+
+    handlePointerUp = () => {
+        window.removeEventListener("pointerup", this.handlePointerUp)
+        window.removeEventListener("pointercancel", this.handlePointerUp)
+
+        const changed = this.pointerGestureChanged
+        this.pointerGestureActive = false
+        this.pointerGestureChanged = false
+        if (changed && this.props.onVolumePreview) this.props.onVolumePreview()
     }
 
     handleWheel = (event) => {
@@ -61,6 +89,7 @@ export default class MacchiatoSlider extends Component {
                     max={100}
                     muted={this.props.muted}
                     onChange={this.handleChange}
+                    onPointerDown={this.handlePointerDown}
                 />
             </div>
         )

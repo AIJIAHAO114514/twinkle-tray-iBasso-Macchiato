@@ -23,6 +23,7 @@ export default function RangeInput(props) {
                     value={level}
                     data-percent={displayLevel(level) + "%"}
                     onChange={props.onChange}
+                    onPointerDown={props.onPointerDown}
                     className="range"
                 />
                 <div className="progress" style={progressStyle}></div>

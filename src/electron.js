@@ -2,6 +2,12 @@ const { app, shell } = require('electron');
 const fs = require('fs')
 
 const path = require('path');
+const {
+  CURRENT_SCHEMA_VERSION,
+  normalizeForkSettingsVersion,
+  convertLegacyHotkeys,
+  repairHotkeys
+} = require("./settings-schema")
 
 let isDev = app.commandLine.hasSwitch("dev");
 
@@ -22,6 +28,10 @@ if(package) package = JSON.parse(package)
 const appVersionFull = (package?.versionBuild ?? app.getVersion())
 const appVersion = appVersionFull.split('+')[0]
 const appVersionTag = appVersion?.split('-')[1]
+// The fork has its own 1.0.x package line, but the settings schema still
+// follows the upstream base it was forked from. Comparing the fork version
+// against settings from 1.18 makes the migration think it is a downgrade.
+const settingsSchemaVersion = CURRENT_SCHEMA_VERSION
 const appBuild = (isDev ? "dev" : appVersionFull.split('+')[1])
 const appBuildShort = (appBuild && appBuild.length > 7 ? appBuild.slice(0, 7) : appBuild)
 
@@ -822,6 +832,30 @@ function resolveScrollAction() {
   return (action === "volume" || action === "brightness") ? action : null
 }
 
+const VOLUME_PREVIEW_DELAY_MS = 150
+let volumePreviewTimer = null
+
+// Audible level feedback for clicking or dragging the volume slider. Wheel and
+// tray scrolling stay silent. The delay is a debounce, so a drag previews once
+// after the user settles instead of beeping on every step; it also lets the
+// DAC's coalesced HID write (or the Windows endpoint write) land first.
+function playVolumePreviewSound() {
+  if (settings.volumePreviewSound === false) return
+  if (volumePreviewTimer) clearTimeout(volumePreviewTimer)
+
+  volumePreviewTimer = setTimeout(() => {
+    volumePreviewTimer = null
+    // The user may have turned the setting off during the debounce window.
+    if (settings.volumePreviewSound === false) return
+    try {
+      shell.beep()
+    } catch (e) {
+      console.log("Could not play the volume preview sound:", e.message)
+    }
+  }, VOLUME_PREVIEW_DELAY_MS)
+  if (volumePreviewTimer.unref) volumePreviewTimer.unref()
+}
+
 function handleScrollAction(action, amount) {
   if (!action) return
 
@@ -834,9 +868,9 @@ function handleScrollAction(action, amount) {
   }
 
   // action === "volume"
-  if (!macchiato || !macchiato.connected) {
-    // No DAC to talk to. Fall back to the pre-existing behaviour instead of
-    // leaving the wheel dead, so unplugging the DAC cannot cost a feature.
+  if (!macchiato || !macchiato.canControlVolume) {
+    // No playback endpoint to talk to. Fall back to brightness rather than
+    // leaving the wheel dead.
     updateAllBrightness(amount)
     if (panelState !== "visible") {
       showOverlay("brightness")
@@ -844,7 +878,12 @@ function handleScrollAction(action, amount) {
     return
   }
 
-  macchiato.adjustVolume(amount)
+  if (!macchiato.adjustVolume(amount)) {
+    // The device disappeared between the capability probe and the write.
+    updateAllBrightness(amount)
+    if (panelState !== "visible") showOverlay("brightness")
+    return
+  }
   if (panelState !== "visible") {
     showOverlay("volume")
   }
@@ -890,8 +929,9 @@ const EXTENDED_MINIMUM_FLOOR_TOLERANCE = 4 // Hardware percent; below the usual 
 
 const defaultSettings = {
   isDev,
-  settingsVer: "v" + appVersion,
+  settingsVer: settingsSchemaVersion,
   settingsBuild: appBuild,
+  settingsFork: "macchiato",
   userClosedIntro: false,
   theme: "default",
   icon: "icon",
@@ -926,6 +966,7 @@ const defaultSettings = {
   scrollShortcutAmount: 2,
   scrollFlyoutAmount: 2,
   invertScroll: false,
+  volumePreviewSound: true,
   // Scroll shortcut routing: the default action applies to a plain scroll, the
   // modifier action applies while the configured key is held.
   scrollDefaultAction: "volume",
@@ -934,6 +975,9 @@ const defaultSettings = {
   // Substring (case-insensitive) matched against the default audio output
   // device name to decide whether the "active" tray icon is shown.
   audioDeviceMatch: "macchiato",
+  // Target of the panel's one-click switch button. Empty means "match the DAC".
+  quickSwitchOutputId: "",
+  quickSwitchOutputName: "",
   useAcrylic: false,
   useNativeAnimation: false,
   sleepAction: "ps",
@@ -1025,9 +1069,11 @@ function normalizeMonitorOrder(order = []) {
 }
 
 function readSettings(doProcessSettings = true) {
+  let loadedSettings = {}
   try {
     if (fs.existsSync(settingsPath)) {
-      settings = Object.assign(settings, JSON.parse(fs.readFileSync(settingsPath)))
+      loadedSettings = JSON.parse(fs.readFileSync(settingsPath))
+      settings = Object.assign(settings, loadedSettings)
     } else {
       fs.writeFileSync(settingsPath, JSON.stringify({}))
     }
@@ -1046,9 +1092,16 @@ function readSettings(doProcessSettings = true) {
 
   if (settings.updateInterval === 999) settings.updateInterval = 100;
 
+  // Older fork builds stamped their package version onto the upstream schema.
+  // Repair that before choosing migrations, otherwise v1.16 runs again and
+  // silently replaces modern hotkeys and monitor features.
+  if (normalizeForkSettingsVersion(settings, loadedSettings)) {
+    console.log("Normalized the fork package version to settings schema " + settingsSchemaVersion + ".")
+  }
+
   // Upgrade settings
   const settingsVersion = Utils.getVersionValue(settings.settingsVer)
-  const appVersionValue = Utils.getVersionValue(`v${app.getVersion()}`)
+  const schemaVersionValue = Utils.getVersionValue(settingsSchemaVersion)
   if(settingsVersion < Utils.getVersionValue("v1.15.0")) {
     // v1.15.0
     try {
@@ -1073,7 +1126,7 @@ function readSettings(doProcessSettings = true) {
     } catch (e) {
       console.log("Couldn't upgrade Idle settings", e)
     }
-  } else if(appVersionValue < Utils.getVersionValue("v1.16.0") && settingsVersion >= Utils.getVersionValue("v1.16.0")) {
+  } else if(schemaVersionValue < Utils.getVersionValue("v1.16.0") && settingsVersion >= Utils.getVersionValue("v1.16.0")) {
     // Downgrade from v1.16.0+
     if(settings.hotkeysPre1160) {
       settings.hotkeys = settings.hotkeysPre1160
@@ -1086,42 +1139,13 @@ function readSettings(doProcessSettings = true) {
     // v1.16.0
     lastKnownDisplays = {} // Reset lastKnownDisplays due to known bug in earlier versions
     try {
-      // Upgrade hotkeys
-      if (settings.hotkeys && Object.values(settings.hotkeys)?.length >= 0) {
+      // Upgrade hotkeys. Only the legacy object shape needs conversion; never
+      // rebuild an array that is already in the current format.
+      if (settings.hotkeys && typeof settings.hotkeys === "object" && !Array.isArray(settings.hotkeys)) {
         settings.hotkeysPre1160 = settings.hotkeys // Save old hotkeys in case of downgrade
-        
-        const newHotkeys = []
-        for (const hotkey of Object.values(settings.hotkeys)) {
-          const newHotkey = {
-            accelerator: hotkey.accelerator,
-            id: uuid(),
-            actions: [
-              {
-                monitors: {},
-                target: "brightness",
-                values: [0],
-                value: 0,
-                allMonitors: false
-              }
-            ]
-          }
-          if (hotkey.monitor === "turn_off_displays") {
-            newHotkey.actions[0].type = "off"
-          } else {
-            newHotkey.monitors = {}
-            if (hotkey.monitor === "all") {
-              newHotkey.actions[0].allMonitors = true
-            } else {
-              newHotkey.actions[0].monitors[hotkey.monitor] = true
-            }
-            newHotkey.actions[0].type = "offset"
-            newHotkey.actions[0].value = settings.hotkeyPercent * hotkey.direction
-          }
-          newHotkeys.push(newHotkey)
-        }
-        settings.hotkeys = newHotkeys
+        settings.hotkeys = convertLegacyHotkeys(settings.hotkeys, settings.hotkeyPercent, uuid)
       }
-      console.log(`Upgraded ${settings.hotkeys.length} hotkeys to v1.16.0 format!`)
+      console.log(`Upgraded ${settings.hotkeys?.length || 0} hotkeys to v1.16.0 format!`)
     } catch (e) {
       console.log("Couldn't upgrade hotkeys", e)
     }
@@ -1205,6 +1229,13 @@ function readSettings(doProcessSettings = true) {
     delete settings.autoDisabledWMI
   }
 
+  // Repair the malformed hotkeys object written when the fork's lower package
+  // version was mistaken for a downgrade from upstream 1.16+. If the old object
+  // is still intact, recover its bindings instead of dropping them.
+  if (repairHotkeys(settings, settings.hotkeyPercent, uuid)) {
+    console.log("Repaired hotkeys setting and recovered legacy bindings when available.")
+  }
+
   // Fix rawSettings bug
   if(settings.rawSettings) delete settings.rawSettings;
 
@@ -1264,7 +1295,7 @@ function processSettings(newSettings = {}, sendUpdate = true) {
 
   try {
 
-    settings.settingsVer = "v" + appVersion
+    settings.settingsVer = settingsSchemaVersion
     settings.settingsBuild = appBuild
 
     if (settings.theme) {
@@ -1430,7 +1461,9 @@ function processSettings(newSettings = {}, sendUpdate = true) {
       lightSensor.changeSettings(newSettings.lightSensor);
     }
 
-    if (newSettings.audioDeviceMatch !== undefined) {
+    if (newSettings.audioDeviceMatch !== undefined ||
+        newSettings.quickSwitchOutputId !== undefined ||
+        newSettings.quickSwitchOutputName !== undefined) {
       macchiato?.refreshAudioMatch()
     }
 
@@ -2065,8 +2098,8 @@ function overlayBounds(kind) {
 }
 
 function overlayPayload() {
-  // Only the layout hint lives here. DAC values are pushed separately on
-  // 'macchiato-state', so there is one source of truth for them in the renderer.
+  // Only the layout hint lives here. The active volume is pushed separately on
+  // 'macchiato-state', so there is one source of truth for it in the renderer.
   return { kind: overlayKind }
 }
 
@@ -2077,7 +2110,7 @@ function sendOverlayPayload() {
 function showOverlay(kind = "brightness", force = true, timeout = 3000) {
   if (currentOverlayType() === "disabled") return false
   if (!mainWindow) return false
-  if (kind === "volume" && !(macchiato && macchiato.connected)) return false
+  if (kind === "volume" && !(macchiato && macchiato.canControlVolume)) return false
 
   const alreadyOverlay = (panelState === "overlay")
 
@@ -4632,16 +4665,20 @@ function initMacchiato() {
   macchiato.on('change', state => {
     setTrayPercent()
     sendToAllWindows('macchiato-state', state)
-    // Keep an open volume OSD alive while the value changes, whoever changed it.
-    if (overlayKind === "volume") bumpOverlayTimer()
+    if (overlayKind === "volume") {
+      // Keep an open volume OSD alive while the value changes, but never leave
+      // it showing a stale level after the last playback endpoint disappears.
+      if (macchiato.canControlVolume) bumpOverlayTimer()
+      else hotkeyOverlayHide(true)
+    }
   })
 
   macchiato.on('connected', () => setTrayPercent())
 
   macchiato.on('disconnected', () => {
     setTrayPercent()
-    // Never leave a dead volume OSD on screen.
-    if (overlayKind === "volume") hotkeyOverlayHide(true)
+    // refreshAudioOutput will fall back to the Windows endpoint if it is still
+    // available; the OSD timer handles the case where nothing is left.
   })
 
   macchiato.on('audio-match', () => {
@@ -4656,13 +4693,13 @@ function initMacchiato() {
     sendToAllWindows('macchiato-audio-output', state)
   })
 
-  macchiato.addIpc(ipcMain)
+  macchiato.addIpc(ipcMain, { onVolumeInput: playVolumePreviewSound })
   ipcMain.handle('macchiato-open-audio-output-menu', event => openMacchiatoAudioOutputMenu(event))
   macchiato.init()
 }
 
-// Native popup for the small hamburger button in the panel. It is built on
-// demand so the checked device and hotplugged endpoints are always current.
+// Native popup for the panel's output picker. It is built on demand so the
+// checked device and hotplugged endpoints are always current.
 function openMacchiatoAudioOutputMenu(event) {
   const outputs = macchiato ? macchiato.getAudioOutputs() : []
   const template = outputs.length ? outputs.map(device => ({
@@ -4698,7 +4735,7 @@ function createTray() {
   setTrayMenu()
   tray.on("click", async () => toggleTray(true))
   tray.on("double-click", () => {
-    if (macchiato && macchiato.connected) macchiato.toggleMute()
+    if (macchiato && macchiato.canControlVolume) macchiato.toggleMute()
   })
 
   let lastMouseMove = Date.now()
@@ -4824,12 +4861,14 @@ function buildTrayTooltip() {
     text += ' (' + Math.round(averagePerc / i) + '%)'
   }
 
-  if (macchiato && macchiato.connected) {
-    if (macchiato.muted) {
-      text += '\niBasso Macchiato: ' + T.t("TRAY_MACCHIATO_MUTED")
+  if (macchiato?.hasActiveVolume) {
+    const active = macchiato.activeVolume
+    const label = active.displayName || T.t("PANEL_MACCHIATO_AUDIO_OUTPUT")
+    if (active.muted) {
+      text += '\n' + label + ': ' + T.t("TRAY_MACCHIATO_MUTED")
     } else {
-      const volume = macchiato.volume === null ? "--" : macchiato.volume
-      text += '\niBasso Macchiato: ' + volume + '%'
+      const volume = active.volume === null ? "--" : active.volume
+      text += '\n' + label + ': ' + volume + '%'
     }
   }
 

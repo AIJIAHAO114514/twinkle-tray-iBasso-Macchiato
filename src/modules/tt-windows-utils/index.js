@@ -48,6 +48,13 @@ module.exports = {
         getRenderDevices: AudioDevice.getRenderDevices,
         // Switches the default playback endpoint; no elevation required.
         setDefaultRenderDevice: AudioDevice.setDefaultRenderDevice,
+        // { volume: 0-100, muted } for the given endpoint, or null.
+        getRenderDeviceVolume: AudioDevice.getRenderDeviceVolume,
+        setRenderDeviceVolume: AudioDevice.setRenderDeviceVolume,
+        setRenderDeviceMuted: AudioDevice.setRenderDeviceMuted,
+        // Watches volume/mute changes for one endpoint.
+        startEndpointVolumeWatch: AudioDevice.startEndpointVolumeWatch,
+        stopEndpointVolumeWatch: AudioDevice.stopEndpointVolumeWatch,
         // Fires whenever the default playback endpoint changes; returns false
         // when COM refuses to register, so callers can fall back to polling.
         startDefaultDeviceWatch: AudioDevice.startDefaultDeviceWatch,

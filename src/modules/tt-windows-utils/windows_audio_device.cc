@@ -1,12 +1,15 @@
 #include <napi.h>
 
 #include <windows.h>
+#include <endpointvolume.h>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <propsys.h>
 #include <propvarutil.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <string>
 
 #pragma comment(lib, "ole32")
@@ -57,9 +60,9 @@ std::string ReadStringProperty(IPropertyStore *store, const PROPERTYKEY &key) {
   return out;
 }
 
-// COM is initialized per call and torn down again. This only ever runs on the
-// Electron main process in response to a poll, so the overhead of a per-call
-// CoInitializeEx is negligible compared to keeping an apartment alive forever.
+// Short-lived COM apartment for individual queries and writes. Watcher
+// registration keeps its own reference instead, because it is unregistered
+// later through the same apartment.
 class ComScope {
 public:
   ComScope() {
@@ -118,7 +121,12 @@ const CLSID CLSID_PolicyConfigClient = {
 class DefaultDeviceWatcher : public IMMNotificationClient {
 public:
   explicit DefaultDeviceWatcher(Napi::ThreadSafeFunction callback)
-      : callback_(callback), refs_(1) {}
+      : callback_(callback), refs_(1) {
+    // A copy of ThreadSafeFunction does not retain the underlying handle by
+    // itself. Keep this watcher's own reference so an in-flight COM callback
+    // can never race a global Release().
+    callback_.Acquire();
+  }
 
   ULONG STDMETHODCALLTYPE AddRef() override {
     return static_cast<ULONG>(InterlockedIncrement(&refs_));
@@ -163,7 +171,7 @@ public:
   void Disable() { alive_.store(false); }
 
 private:
-  ~DefaultDeviceWatcher() = default;
+  ~DefaultDeviceWatcher() { callback_.Release(); }
 
   Napi::ThreadSafeFunction callback_;
   std::atomic<bool> alive_{true};
@@ -173,6 +181,114 @@ private:
 Napi::ThreadSafeFunction g_watchCallback;
 DefaultDeviceWatcher *g_watcher = nullptr;
 IMMDeviceEnumerator *g_watchEnumerator = nullptr;
+// The enumerator is unregistered through the same apartment that registered
+// it, so keep our CoInitializeEx reference until the watcher stops.
+bool g_watchComInitialized = false;
+
+// Shared by normal shutdown and the registration-failure path. Keeping the
+// cleanup in one place prevents one path from releasing the ThreadSafeFunction
+// while leaving a stale wrapper behind for a later stop.
+void StopDefaultDeviceWatchInternal(bool unregister) {
+  if (g_watcher != nullptr) g_watcher->Disable();
+
+  if (unregister && g_watchEnumerator != nullptr && g_watcher != nullptr) {
+    g_watchEnumerator->UnregisterEndpointNotificationCallback(g_watcher);
+  }
+  if (g_watcher != nullptr) {
+    g_watcher->Release();
+    g_watcher = nullptr;
+  }
+  if (g_watchEnumerator != nullptr) {
+    g_watchEnumerator->Release();
+    g_watchEnumerator = nullptr;
+  }
+  if (g_watchCallback) {
+    // Release() does not clear the wrapper. Reset it before releasing so even a
+    // duplicate stop cannot release the same thread-safe function twice.
+    Napi::ThreadSafeFunction callback = g_watchCallback;
+    g_watchCallback = Napi::ThreadSafeFunction();
+    callback.Release();
+  }
+  if (g_watchComInitialized) {
+    CoUninitialize();
+    g_watchComInitialized = false;
+  }
+}
+
+// ── Endpoint volume notifications ────────────────────────────────────
+// Volume keys and other apps change an endpoint on COM-owned threads. The watch
+// below forwards those changes to JS so the panel never has to poll.
+class EndpointVolumeWatcher : public IAudioEndpointVolumeCallback {
+public:
+  explicit EndpointVolumeWatcher(Napi::ThreadSafeFunction callback)
+      : callback_(callback), refs_(1) {
+    callback_.Acquire();
+  }
+
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return static_cast<ULONG>(InterlockedIncrement(&refs_));
+  }
+
+  ULONG STDMETHODCALLTYPE Release() override {
+    LONG refs = InterlockedDecrement(&refs_);
+    if (refs == 0) delete this;
+    return static_cast<ULONG>(refs);
+  }
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override {
+    if (out == nullptr) return E_POINTER;
+    if (riid == __uuidof(IUnknown) || riid == __uuidof(IAudioEndpointVolumeCallback)) {
+      *out = static_cast<IAudioEndpointVolumeCallback *>(this);
+      AddRef();
+      return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+  }
+
+  HRESULT STDMETHODCALLTYPE OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA /*data*/) override {
+    if (alive_.load()) callback_.NonBlockingCall();
+    return S_OK;
+  }
+
+  void Disable() { alive_.store(false); }
+
+private:
+  ~EndpointVolumeWatcher() { callback_.Release(); }
+
+  Napi::ThreadSafeFunction callback_;
+  std::atomic<bool> alive_{true};
+  LONG refs_;
+};
+
+Napi::ThreadSafeFunction *g_volumeWatchCallback = nullptr;
+EndpointVolumeWatcher *g_volumeWatcher = nullptr;
+IAudioEndpointVolume *g_volumeEndpoint = nullptr;
+bool g_volumeComInitialized = false;
+
+void StopEndpointVolumeWatchInternal() {
+  if (g_volumeWatcher != nullptr) g_volumeWatcher->Disable();
+  if (g_volumeEndpoint != nullptr && g_volumeWatcher != nullptr) {
+    g_volumeEndpoint->UnregisterControlChangeNotify(g_volumeWatcher);
+  }
+  if (g_volumeEndpoint != nullptr) {
+    g_volumeEndpoint->Release();
+    g_volumeEndpoint = nullptr;
+  }
+  if (g_volumeWatcher != nullptr) {
+    g_volumeWatcher->Release();
+    g_volumeWatcher = nullptr;
+  }
+  if (g_volumeWatchCallback != nullptr) {
+    g_volumeWatchCallback->Release();
+    delete g_volumeWatchCallback;
+    g_volumeWatchCallback = nullptr;
+  }
+  if (g_volumeComInitialized) {
+    CoUninitialize();
+    g_volumeComInitialized = false;
+  }
+}
 
 std::wstring ReadDeviceId(IMMDevice *device) {
   if (device == nullptr) return std::wstring();
@@ -186,7 +302,22 @@ std::wstring ReadDeviceId(IMMDevice *device) {
   return out;
 }
 
-Napi::Object BuildRenderDevice(Napi::Env env, IMMDevice *device, IPropertyStore *store,
+HRESULT OpenRenderDevice(IMMDeviceEnumerator *enumerator, const std::wstring &id,
+                         IMMDevice **device) {
+  if (enumerator == nullptr || device == nullptr) return E_POINTER;
+  *device = nullptr;
+  if (id.empty()) return enumerator->GetDefaultAudioEndpoint(eRender, eConsole, device);
+  return enumerator->GetDevice(id.c_str(), device);
+}
+
+HRESULT OpenEndpointVolume(IMMDevice *device, IAudioEndpointVolume **volume) {
+  if (device == nullptr || volume == nullptr) return E_POINTER;
+  *volume = nullptr;
+  return device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                          reinterpret_cast<void **>(volume));
+}
+
+Napi::Object BuildRenderDevice(Napi::Env env, IPropertyStore *store,
                                const std::wstring &id, bool isDefault) {
   std::string endpointName = ReadStringProperty(store, PKEY_Device_FriendlyName);
   std::string deviceName = ReadStringProperty(store, PKEY_DeviceInterface_FriendlyName);
@@ -239,7 +370,10 @@ Napi::Value GetRenderDevices(const Napi::CallbackInfo &info) {
   UINT count = 0;
   collection->GetCount(&count);
 
-  Napi::Array result = Napi::Array::New(env, count);
+  // Grow only after a device has been read successfully. Preallocating count
+  // and skipping failures would leave holes, which JS treats as undefined
+  // entries instead of simply omitting the unavailable endpoint.
+  Napi::Array result = Napi::Array::New(env);
   uint32_t written = 0;
 
   for (UINT i = 0; i < count; ++i) {
@@ -249,8 +383,10 @@ Napi::Value GetRenderDevices(const Napi::CallbackInfo &info) {
     IPropertyStore *store = nullptr;
     if (SUCCEEDED(device->OpenPropertyStore(STGM_READ, &store)) && store != nullptr) {
       const std::wstring id = ReadDeviceId(device);
-      const bool isDefault = !id.empty() && id == defaultId;
-      result.Set(written++, BuildRenderDevice(env, device, store, id, isDefault));
+      if (!id.empty()) {
+        const bool isDefault = id == defaultId;
+        result.Set(written++, BuildRenderDevice(env, store, id, isDefault));
+      }
       store->Release();
     }
 
@@ -393,16 +529,25 @@ Napi::Value StartDefaultDeviceWatch(const Napi::CallbackInfo &info) {
   }
   if (g_watcher != nullptr) return Napi::Boolean::New(env, true);
 
-  // An endpoint notification callback needs an initialized apartment on this
-  // thread. Electron's UI thread normally has one; RPC_E_CHANGED_MODE means a
-  // different mode is already active, which still works for registration.
-  CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  // Hold our apartment reference until StopDefaultDeviceWatch. Unregistering
+  // through a different apartment is not guaranteed to reach the registration.
+  // RPC_E_CHANGED_MODE means another mode already owns COM on this thread; that
+  // is usable, but we must not uninitialize a reference we did not create.
+  const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  if (FAILED(comResult) && comResult != RPC_E_CHANGED_MODE) {
+    return Napi::Boolean::New(env, false);
+  }
+  g_watchComInitialized = SUCCEEDED(comResult);
 
   IMMDeviceEnumerator *enumerator = nullptr;
   HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
                                 __uuidof(IMMDeviceEnumerator),
                                 reinterpret_cast<void **>(&enumerator));
   if (FAILED(hr) || enumerator == nullptr) {
+    if (g_watchComInitialized) {
+      CoUninitialize();
+      g_watchComInitialized = false;
+    }
     return Napi::Boolean::New(env, false);
   }
 
@@ -410,38 +555,220 @@ Napi::Value StartDefaultDeviceWatch(const Napi::CallbackInfo &info) {
       env, info[0].As<Napi::Function>(), "defaultAudioDeviceWatch", 0, 1);
 
   g_watcher = new DefaultDeviceWatcher(g_watchCallback);
+  // Keep the enumerator alive: unregistering needs the same instance.
+  g_watchEnumerator = enumerator;
   hr = enumerator->RegisterEndpointNotificationCallback(g_watcher);
 
   if (FAILED(hr)) {
-    g_watcher->Disable();
-    g_watcher->Release();
-    g_watcher = nullptr;
-    g_watchCallback.Release();
-    enumerator->Release();
+    // Registration never succeeded, so all resources must be torn down through
+    // the same path as a normal stop, without attempting to unregister.
+    StopDefaultDeviceWatchInternal(false);
     return Napi::Boolean::New(env, false);
   }
 
-  // Keep the enumerator alive: unregistering needs the same instance.
-  g_watchEnumerator = enumerator;
   return Napi::Boolean::New(env, true);
 }
 
 Napi::Value StopDefaultDeviceWatch(const Napi::CallbackInfo &info) {
-  if (g_watchEnumerator != nullptr && g_watcher != nullptr) {
-    g_watchEnumerator->UnregisterEndpointNotificationCallback(g_watcher);
+  StopDefaultDeviceWatchInternal(true);
+  return Napi::Boolean::New(info.Env(), true);
+}
+
+// Reads the Windows volume and mute state for a playback endpoint id. Passing
+// an empty id reads the current default render endpoint.
+Napi::Value GetRenderDeviceVolume(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsString()) {
+    Napi::TypeError::New(env, "getRenderDeviceVolume expects a device id")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
   }
-  if (g_watcher != nullptr) {
-    g_watcher->Disable();
-    g_watcher->Release();
-    g_watcher = nullptr;
+
+  ComScope com;
+  if (!com.usable()) return env.Null();
+
+  const std::wstring deviceId = Utf8ToWide(info[0].As<Napi::String>().Utf8Value());
+  IMMDeviceEnumerator *enumerator = nullptr;
+  IMMDevice *device = nullptr;
+  IAudioEndpointVolume *volume = nullptr;
+  Napi::Value result = env.Null();
+
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void **>(&enumerator));
+  if (SUCCEEDED(hr) && enumerator != nullptr) {
+    hr = OpenRenderDevice(enumerator, deviceId, &device);
   }
-  if (g_watchEnumerator != nullptr) {
-    g_watchEnumerator->Release();
-    g_watchEnumerator = nullptr;
+  if (SUCCEEDED(hr) && device != nullptr) {
+    hr = OpenEndpointVolume(device, &volume);
   }
-  if (g_watchCallback) {
-    g_watchCallback.Release();
+
+  if (SUCCEEDED(hr) && volume != nullptr) {
+    float scalar = 0.0f;
+    BOOL muted = FALSE;
+    if (SUCCEEDED(volume->GetMasterVolumeLevelScalar(&scalar)) &&
+        SUCCEEDED(volume->GetMute(&muted))) {
+      Napi::Object state = Napi::Object::New(env);
+      state.Set("volume", Napi::Number::New(env, std::lround(scalar * 100.0f)));
+      state.Set("muted", Napi::Boolean::New(env, muted != FALSE));
+      result = state;
+    }
   }
+
+  if (volume != nullptr) volume->Release();
+  if (device != nullptr) device->Release();
+  if (enumerator != nullptr) enumerator->Release();
+  return result;
+}
+
+Napi::Value SetRenderDeviceVolume(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 2 || !info[0].IsString() || !info[1].IsNumber()) {
+    Napi::TypeError::New(env, "setRenderDeviceVolume expects a device id and volume")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ComScope com;
+  if (!com.usable()) return Napi::Boolean::New(env, false);
+
+  const std::wstring deviceId = Utf8ToWide(info[0].As<Napi::String>().Utf8Value());
+  int level = info[1].As<Napi::Number>().Int32Value();
+  level = std::max(0, std::min(100, level));
+
+  IMMDeviceEnumerator *enumerator = nullptr;
+  IMMDevice *device = nullptr;
+  IAudioEndpointVolume *volume = nullptr;
+  bool ok = false;
+
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void **>(&enumerator));
+  if (SUCCEEDED(hr) && enumerator != nullptr) {
+    hr = OpenRenderDevice(enumerator, deviceId, &device);
+  }
+  if (SUCCEEDED(hr) && device != nullptr) {
+    hr = OpenEndpointVolume(device, &volume);
+  }
+
+  if (SUCCEEDED(hr) && volume != nullptr) {
+    hr = volume->SetMasterVolumeLevelScalar(static_cast<float>(level) / 100.0f, nullptr);
+    if (SUCCEEDED(hr)) {
+      // Moving the volume up while muted should make the device audible, just
+      // like the Windows volume keys.
+      volume->SetMute(FALSE, nullptr);
+      ok = true;
+    }
+  }
+
+  if (volume != nullptr) volume->Release();
+  if (device != nullptr) device->Release();
+  if (enumerator != nullptr) enumerator->Release();
+  return Napi::Boolean::New(env, ok);
+}
+
+Napi::Value SetRenderDeviceMuted(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 2 || !info[0].IsString() || !info[1].IsBoolean()) {
+    Napi::TypeError::New(env, "setRenderDeviceMuted expects a device id and a boolean")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ComScope com;
+  if (!com.usable()) return Napi::Boolean::New(env, false);
+
+  const std::wstring deviceId = Utf8ToWide(info[0].As<Napi::String>().Utf8Value());
+  const bool muted = info[1].As<Napi::Boolean>().Value();
+
+  IMMDeviceEnumerator *enumerator = nullptr;
+  IMMDevice *device = nullptr;
+  IAudioEndpointVolume *volume = nullptr;
+  bool ok = false;
+
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void **>(&enumerator));
+  if (SUCCEEDED(hr) && enumerator != nullptr) {
+    hr = OpenRenderDevice(enumerator, deviceId, &device);
+  }
+  if (SUCCEEDED(hr) && device != nullptr) {
+    hr = OpenEndpointVolume(device, &volume);
+  }
+  if (SUCCEEDED(hr) && volume != nullptr) {
+    ok = SUCCEEDED(volume->SetMute(muted ? TRUE : FALSE, nullptr));
+  }
+
+  if (volume != nullptr) volume->Release();
+  if (device != nullptr) device->Release();
+  if (enumerator != nullptr) enumerator->Release();
+  return Napi::Boolean::New(env, ok);
+}
+
+// Watches one endpoint. The service re-registers when the default output
+// changes; stop is called first so the old callback can never outlive its JS
+// environment.
+Napi::Value StartEndpointVolumeWatch(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 2 || !info[0].IsString() || !info[1].IsFunction()) {
+    Napi::TypeError::New(env, "startEndpointVolumeWatch expects a device id and callback")
+        .ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  // Stop first; that also releases the apartment reference held by the old
+  // watcher. The new watcher keeps its own reference until it is stopped.
+  StopEndpointVolumeWatchInternal();
+  const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  if (FAILED(comResult) && comResult != RPC_E_CHANGED_MODE) {
+    return Napi::Boolean::New(env, false);
+  }
+  g_volumeComInitialized = SUCCEEDED(comResult);
+
+  const std::wstring deviceId = Utf8ToWide(info[0].As<Napi::String>().Utf8Value());
+  IMMDeviceEnumerator *enumerator = nullptr;
+  IMMDevice *device = nullptr;
+  IAudioEndpointVolume *volume = nullptr;
+
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void **>(&enumerator));
+  if (SUCCEEDED(hr) && enumerator != nullptr) {
+    hr = OpenRenderDevice(enumerator, deviceId, &device);
+  }
+  if (SUCCEEDED(hr) && device != nullptr) {
+    hr = OpenEndpointVolume(device, &volume);
+  }
+
+  if (enumerator != nullptr) enumerator->Release();
+  if (device != nullptr) device->Release();
+  if (FAILED(hr) || volume == nullptr) {
+    if (volume != nullptr) volume->Release();
+    StopEndpointVolumeWatchInternal();
+    return Napi::Boolean::New(env, false);
+  }
+
+  g_volumeWatchCallback = new Napi::ThreadSafeFunction(
+      Napi::ThreadSafeFunction::New(env, info[1].As<Napi::Function>(),
+                                    "endpointVolumeWatch", 0, 1));
+  g_volumeWatcher = new EndpointVolumeWatcher(*g_volumeWatchCallback);
+  g_volumeEndpoint = volume;
+
+  hr = volume->RegisterControlChangeNotify(g_volumeWatcher);
+  if (FAILED(hr)) {
+    StopEndpointVolumeWatchInternal();
+    return Napi::Boolean::New(env, false);
+  }
+
+  return Napi::Boolean::New(env, true);
+}
+
+Napi::Value StopEndpointVolumeWatch(const Napi::CallbackInfo &info) {
+  StopEndpointVolumeWatchInternal();
   return Napi::Boolean::New(info.Env(), true);
 }
 
@@ -449,6 +776,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("getDefaultRenderDevice", Napi::Function::New(env, GetDefaultRenderDevice));
   exports.Set("getRenderDevices", Napi::Function::New(env, GetRenderDevices));
   exports.Set("setDefaultRenderDevice", Napi::Function::New(env, SetDefaultRenderDevice));
+  exports.Set("getRenderDeviceVolume", Napi::Function::New(env, GetRenderDeviceVolume));
+  exports.Set("setRenderDeviceVolume", Napi::Function::New(env, SetRenderDeviceVolume));
+  exports.Set("setRenderDeviceMuted", Napi::Function::New(env, SetRenderDeviceMuted));
+  exports.Set("startEndpointVolumeWatch", Napi::Function::New(env, StartEndpointVolumeWatch));
+  exports.Set("stopEndpointVolumeWatch", Napi::Function::New(env, StopEndpointVolumeWatch));
   exports.Set("startDefaultDeviceWatch", Napi::Function::New(env, StartDefaultDeviceWatch));
   exports.Set("stopDefaultDeviceWatch", Napi::Function::New(env, StopDefaultDeviceWatch));
   return exports;
